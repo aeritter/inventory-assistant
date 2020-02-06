@@ -5,6 +5,13 @@
 
 
 import re, os.path, subprocess, time
+import json, requests
+
+with open('C:\\airtabletest\\api_key.txt', 'r') as key:
+    api_key = key.read()
+
+with open('C:\\airtabletest\\url.txt', 'r') as url:
+    url = str(url.read())
 
 filefolder = 'C:\\airtabletest\\python-test\\'              #location of .pdf files
 pdftotextlocation = 'C:\\airtabletest\\pdftotext'           #location of pdftotext.exe (obtained from xpdfreader.com commandline tools)
@@ -12,7 +19,7 @@ pdftotextlocation = 'C:\\airtabletest\\pdftotext'           #location of pdftote
 def checkfolder():
 #    try:
         for x in os.listdir(filefolder):
-            if str(x)[-18:] != 'unknown format.txt' and str(x)[-3:] != 'txt':
+            if str(x)[-18:] != 'unknown format.txt' and str(x)[-3:] != 'txt': #if filename doesn't contain 'unknown format.txt' and doesn't contain 'txt' at the end, then:
                 subprocess.run([pdftotextlocation, '-nopgbrk', filefolder+str(x)]) #convert pdf to text
                 filepath = filefolder+str(x)[:-4]           #create string of filepath to .txt file
                 print(filepath)
@@ -54,9 +61,28 @@ def mackimport(file):
     time.sleep(1)
     print("Importing Mack info")
 
+    content = {} #dictionary
+
+    return content
+
 def volvoimport(file):
     time.sleep(1)
     print("Importing Volvo info")
     
 
-checkfolder()
+def posttoairtable(content):
+    headers = {
+        "Authorization":str("Bearer "+api_key),
+        "User-Agent":"Python Script",
+        "Content-Type":"application/json",
+        "X-API-VERSION":"0.1.0",
+    }
+    x = requests.post(url,data=None,json=content,headers=headers)
+    print("Post response: ",x.json(),"\n Post HTTP code:", x)
+
+testdata={
+    "fields": {
+        "Name":"TULtest"
+    }
+}
+posttoairtable(testdata)
