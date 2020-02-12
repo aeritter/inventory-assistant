@@ -18,17 +18,17 @@ with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt
 
 filefolder = 'C:\\airtabletest\\python-test\\'              # location of .pdf files
 pdftotextlocation = 'C:\\airtabletest\\pdftotext'           # location of pdftotext.exe (obtained from xpdfreader.com commandline tools)
-Mackregex = re.compile(r'^(.+?) {2,}(.*)\n')
+Mackregex = re.compile(r'^(.+?) {2,}(.*)\n', flags=re.M)
 Volvoregex = re.compile(r'')
 
 
 def checkfornewfiles():
 #    try:
-        for x in os.listdir(filefolder):
-            if str(x)[-18:] != 'unknown format.txt' and str(x)[-3:] != 'txt': #   if filename doesn't contain 'unknown format.txt'
-                                                                              #   and doesn't contain 'txt' at the end, then:
-                subprocess.run([pdftotextlocation, '-nopgbrk', '-table','-margint', '70', '-marginb','40', filefolder+str(x)]) # convert pdf to text
-                filepath = filefolder+str(x)[:-4]           # create string of filepath to .txt file
+        for filename in os.listdir(filefolder):
+            if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
+                                                                            #   and is a file, not a folder, then:
+                subprocess.run([pdftotextlocation, '-nopgbrk', '-table','-margint', '70', '-marginb','40', filefolder+str(filename)]) # convert pdf to text
+                filepath = filefolder+str(filename)[:-4]           # create string of filepath to .txt file
                 filetype = "None"
                 print(filepath)
                 while os.path.exists(filepath+".txt") != True:
@@ -49,7 +49,7 @@ def checkfornewfiles():
                     x = 20
                     while x > 0:
                         try:
-                            os.rename(filepath+".txt", filepath+" unknown format.txt")  # rename file if not matched
+                            os.rename(filepath+".txt", filefolder+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
                             break
                         except PermissionError:
                             time.sleep(3)
@@ -61,19 +61,21 @@ def checkfornewfiles():
 
                 if filetype != "None":
                     print(filetype)
-                    if debug == True:
+                    if debug == True:                   # create a regex debug file
                         writefile(n, filepath, " (debug).txt")
+                    else:                               # if not debugging, move pdfs to Done folder
+                        os.rename(filepath+'.pdf', filefolder+"\\Done\\"+filename)
                     dataimport(n, filetype)
-                    os.remove(filepath+'.txt')               
+                    os.remove(filepath+'.txt')
 
-                print(x)
+                print(filename)
  #   except:
  #       print("something went wrong")
 
 
 def writefile(n, filepath, extension):                                 # write file for debugging
     a = open(filepath+extension, 'w')
-    a.write(n)
+    a.write(str(n))
     a.close()
 
 def dataimport(file, filetype):                             #   takes the file and processes it to take out the relevant information
@@ -83,7 +85,9 @@ def dataimport(file, filetype):                             #   takes the file a
     content = []                                            # list of dictionaries, one dictionary per airtable row
     if filetype == "Mack":
 #        reg = re.compile(r'.*?Year:(\w*).*?MODEL\) (.*?)\n.*?ENGINE PACKAGE (.*?)\n.*?TRANSMISSION (.*?)\n.*?FRONT AXLE.*?AXLE.*?AXLE (.*?)\n.*?REAR AXLES - TANDEM (.*?)\n.*?REAR AXLE RATIO RATIO (\d\.\d\d).*?SUSPENSION - TANDEM (.*?)\n.*?DIFFERENTIAL (.*?)\n.*?WHEELBASE (.*?)\n.*?FUEL TANK - LH (.*?)\n.*?FIFTH WHEEL (.*?)\n.*?SLEEPER BOX (.*?)\n.*?DOOR OPENING OPTIONS (.*?)\n.*?MIRRORS - EXTERIOR (.*?)\n.*?REFRIGERATOR (.*?)\n.*?INVERTER - POWER (.*?)\n.*?TIRES BRAND/TYPE - FRONT (.*?)\n.*?WHEELS - FRONT (.*?)\n.*?TIRES BRAND/TYPE - REAR (.*?)\n.*?WHEELS - REAR (.*?)\n.*?PAINT COLOR - AREA A (.*?)\n.*?PRICE BOOK\nLEVEL:\n(.*?)\n',g,s,)
-        print()
+        mackRegexMatches = re.findall(Mackregex, file)
+        writefile(mackRegexMatches,"C:\\airtabletest\\test.txt","")
+        print(mackRegexMatches)
     elif filetype == "Volvo":
         print()
 
