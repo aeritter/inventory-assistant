@@ -96,7 +96,7 @@ def posttoairtable(content):                                # uploads the data t
     print("Post response: ",x.json())
     print("\n Post HTTP code:", x)
 
-if debug == True and sendairtabletestdata == False:
+if debug == True and sendairtabletestdata == True:
     testdata={
         "records": [
             {
