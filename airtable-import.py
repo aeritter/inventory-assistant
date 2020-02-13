@@ -3,7 +3,6 @@
     
 """
 
-
 import re, os.path, subprocess, time
 import json, requests
 
@@ -30,7 +29,7 @@ def main():
         for filename in os.listdir(filefolder):
             if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
                                                                             #   and is a file, not a folder, then:
-                subprocess.run([pdftotextlocation, '-nopgbrk', '-table','-margint', '70', '-marginb','40', filefolder+str(filename)]) # convert pdf to text
+                subprocess.run([pdftotextlocation, '-nopgbrk', '-table', '-marginb','40', filefolder+str(filename)]) # convert pdf to text
                 filepath = filefolder+str(filename)[:-4]           # create string of filepath to .txt file
                 filetype = "None"
                 print(filepath)
@@ -41,10 +40,10 @@ def main():
                 with open(filepath+'.txt', 'r+') as c:
                     n = c.read()
                 line1 = n.split('\n', 1)[0]                 # first line of .txt file
-                # line2 = n.split('\n', 2)[1]                 # second line of .txt file
-                if "Selected & Major" in line1:
+                line2 = n.split('\n', 2)[1]                 # second line of .txt file
+                if "Welcome to Volvo" in line1:
                     filetype = "Volvo"
-                elif "Model Year:" in line1:
+                elif "GSO:" in line2:
                     filetype = "Mack"
                 else:
                     print("Unknown format")
@@ -96,17 +95,15 @@ def dataimport(file, filetype):                             #   takes the file a
         for x in mackRegexMatches:
             if x[0] in macklist:
                 records.append(prepforupload(x))
-    # elif filetype == "Volvo":
-    #     print()
-    #     volvoRegexMatches = re.findall(Volvoregex, file)
-    #     if debug == True:
-    #         writefile(volvoRegexMatches,"C:\\airtabletest\\volvoregexmatches.txt","")
-    #         print(volvoRegexMatches)
-    #     for x in volvoRegexMatches:
-    #         if x[0] in volvolist:
-    #             records.append(prepforupload(x))
-
-    # pattern = reg.search(file)
+    elif filetype == "Volvo":
+        print()
+        volvoRegexMatches = re.findall(Volvoregex, file)
+        if debug == True:
+            writefile(volvoRegexMatches,"C:\\airtabletest\\volvoregexmatches.txt","")
+            print(volvoRegexMatches)
+        # for x in volvoRegexMatches:
+        #     if x[0] in volvolist:
+        #         records.append(prepforupload(x))
 
     posttoairtable(content)
     
@@ -147,4 +144,4 @@ if debug == True and sendairtabletestdata == True:
     }
     posttoairtable(testdata)
 else:
-    main()                      # main
+    main()
