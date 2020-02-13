@@ -20,9 +20,12 @@ filefolder = 'C:\\airtabletest\\python-test\\'              # location of .pdf f
 pdftotextlocation = 'C:\\airtabletest\\pdftotext'           # location of pdftotext.exe (obtained from xpdfreader.com commandline tools)
 Mackregex = re.compile(r'^(.+?) {2,}(.*)\n', flags=re.M)
 Volvoregex = re.compile(r'')
+macklist = ['CHASSIS (BASE MODEL)']
+volvolist = []
+converttoheader = {'CHASSIS (BASE MODEL)':'Name'}                                        # dictionary containing headers pulled from file and their respective values in Airtable
 
 
-def checkfornewfiles():
+def main():
 #    try:
         for filename in os.listdir(filefolder):
             if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
@@ -79,22 +82,41 @@ def writefile(n, filepath, extension):                                 # write f
     a.close()
 
 def dataimport(file, filetype):                             #   takes the file and processes it to take out the relevant information
-    time.sleep(.4)                                           #   according to which vendor it came from, then returns a list of dictionaries
+    time.sleep(.4)                                          #   according to which vendor it came from, then returns a dictionary
     print(f"Importing {filetype} info")                     #   to be uploaded to Airtable
 
-    content = []                                            # list of dictionaries, one dictionary per airtable row
+    records = []
+    content = {"records":records}                                            # content of message to airtable API
     if filetype == "Mack":
 #        reg = re.compile(r'.*?Year:(\w*).*?MODEL\) (.*?)\n.*?ENGINE PACKAGE (.*?)\n.*?TRANSMISSION (.*?)\n.*?FRONT AXLE.*?AXLE.*?AXLE (.*?)\n.*?REAR AXLES - TANDEM (.*?)\n.*?REAR AXLE RATIO RATIO (\d\.\d\d).*?SUSPENSION - TANDEM (.*?)\n.*?DIFFERENTIAL (.*?)\n.*?WHEELBASE (.*?)\n.*?FUEL TANK - LH (.*?)\n.*?FIFTH WHEEL (.*?)\n.*?SLEEPER BOX (.*?)\n.*?DOOR OPENING OPTIONS (.*?)\n.*?MIRRORS - EXTERIOR (.*?)\n.*?REFRIGERATOR (.*?)\n.*?INVERTER - POWER (.*?)\n.*?TIRES BRAND/TYPE - FRONT (.*?)\n.*?WHEELS - FRONT (.*?)\n.*?TIRES BRAND/TYPE - REAR (.*?)\n.*?WHEELS - REAR (.*?)\n.*?PAINT COLOR - AREA A (.*?)\n.*?PRICE BOOK\nLEVEL:\n(.*?)\n',g,s,)
         mackRegexMatches = re.findall(Mackregex, file)
-        writefile(mackRegexMatches,"C:\\airtabletest\\test.txt","")
-        print(mackRegexMatches)
-    elif filetype == "Volvo":
-        print()
+        if debug == True:
+            writefile(mackRegexMatches,"C:\\airtabletest\\mackregexmatches.txt","")
+            print(mackRegexMatches)
+        for x in mackRegexMatches:
+            if x[0] in macklist:
+                records.append(prepforupload(x))
+    # elif filetype == "Volvo":
+    #     print()
+    #     volvoRegexMatches = re.findall(Volvoregex, file)
+    #     if debug == True:
+    #         writefile(volvoRegexMatches,"C:\\airtabletest\\volvoregexmatches.txt","")
+    #         print(volvoRegexMatches)
+    #     for x in volvoRegexMatches:
+    #         if x[0] in volvolist:
+    #             records.append(prepforupload(x))
 
     # pattern = reg.search(file)
 
-    return content
+    posttoairtable(content)
     
+
+def prepforupload(content):
+    columnheader = converttoheader[content[0]]
+    fields = {columnheader:content[1]}
+    contentasjson = {"fields":fields}
+
+    return contentasjson
 
 def posttoairtable(content):                                # uploads the data to Airtable
     headers = {
@@ -125,4 +147,4 @@ if debug == True and sendairtabletestdata == True:
     }
     posttoairtable(testdata)
 else:
-    checkfornewfiles()                      # main
+    main()                      # main
