@@ -15,22 +15,38 @@ with open('C:\\airtabletest\\api_key.txt', 'r') as key:     # location of .txt f
 with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt file containing URL for the table in Airtable 
     url = url.read()                                        #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-filefolder = 'C:\\airtabletest\\python-test\\'              # location of .pdf files
-pdftotextlocation = 'C:\\airtabletest\\pdftotext'           # location of pdftotext.exe (obtained from xpdfreader.com commandline tools)
-Mackregex = re.compile(r'^(.+?) {2,}(.*)\n', flags=re.M)
-Volvoregex = re.compile(r'')
+pdfFolderLocation = 'C:\\airtabletest\\python-test\\'              # location of .pdf files
+pdftotextExecutable = 'C:\\airtabletest\\pdftotext'           # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+mackRegex = re.compile(r'^(.+?) {2,}(.*)\n', flags=re.M)
+mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S)
+volvoRegex = re.compile(r'')
+mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 macklist = ['CHASSIS (BASE MODEL)']
 volvolist = []
-converttoheader = {'CHASSIS (BASE MODEL)':'Name'}                                        # dictionary containing headers pulled from file and their respective values in Airtable
+    # dictionary containing headers pulled from file and their respective values in Airtable
+headerConversionList = {
+    'Model':'Model',                        'GSO':'Order Number',
+    # 'Chassis Number':'Chassis Number',
+    'Model Year':'Year',                    
+    # 'CHASSIS (BASE MODEL)':'Chassis',
+           'TRANSMISSION':'Trans Model',
+    'FRONT AXLE':'Front Axle',              'REAR AXLES - TANDEM':'Rear Axle',
+    'REAR AXLE RATIO':'Ratio',              'WHEELBASE':'Wheelbase',
+    'SLEEPER BOX':'Sleeper',                'PAINT COLOR - AREA A':'Color',
+    'PAINT COLOR - FIRST COLOR':'Color'
+    
+}
 
 
 def main():
 #    try:
-        for filename in os.listdir(filefolder):
+        records = []
+        content = {"records":records}
+        for filename in os.listdir(pdfFolderLocation):
             if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
                                                                             #   and is a file, not a folder, then:
-                subprocess.run([pdftotextlocation, '-nopgbrk', '-table', '-marginb','40', filefolder+str(filename)]) # convert pdf to text
-                filepath = filefolder+str(filename)[:-4]           # create string of filepath to .txt file
+                subprocess.run([pdftotextExecutable, '-nopgbrk', '-table', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
+                filepath = pdfFolderLocation+str(filename)[:-4]           # create string of filepath to .txt file
                 filetype = "None"
                 print(filepath)
                 while os.path.exists(filepath+".txt") != True:
@@ -40,7 +56,7 @@ def main():
                 with open(filepath+'.txt', 'r+') as c:
                     n = c.read()
                 line1 = n.split('\n', 1)[0]                 # first line of .txt file
-                line2 = n.split('\n', 2)[1]                 # second line of .txt file
+                line2 = n.split('\n', 3)[2]                 # second line of .txt file
                 if "Welcome to Volvo" in line1:
                     filetype = "Volvo"
                 elif "GSO:" in line2:
@@ -51,7 +67,7 @@ def main():
                     x = 20
                     while x > 0:
                         try:
-                            os.rename(filepath+".txt", filefolder+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
+                            os.rename(filepath+".txt", pdfFolderLocation+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
                             break
                         except PermissionError:
                             time.sleep(3)
@@ -66,56 +82,60 @@ def main():
                     if debug == True:                   # create a regex debug file
                         writefile(n, filepath, " (debug).txt")
                     else:                               # if not debugging, move pdfs to Done folder
-                        os.rename(filepath+'.pdf', filefolder+"\\Done\\"+filename)
-                    dataimport(n, filetype)
+                        os.rename(filepath+'.pdf', pdfFolderLocation+"\\Done\\"+filename)
+                    records.append(dataimport(n, filetype))
                     os.remove(filepath+'.txt')
 
                 print(filename)
+        print(content)
+        uploadDataToAirtable(content)
  #   except:
  #       print("something went wrong")
 
 
-def writefile(n, filepath, extension):                                 # write file for debugging
+def writefile(n, filepath, extension):                      # write file for debugging
     a = open(filepath+extension, 'w')
     a.write(str(n))
     a.close()
 
 def dataimport(file, filetype):                             #   takes the file and processes it to take out the relevant information
-    time.sleep(.4)                                          #   according to which vendor it came from, then returns a dictionary
-    print(f"Importing {filetype} info")                     #   to be uploaded to Airtable
+    time.sleep(.4)                                          #   according to which vendor it came from, then returns the fields for
+    print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
 
-    records = []
-    content = {"records":records}                                            # content of message to airtable API
+    fieldEntries = {}
+    fields = {"fields":fieldEntries}
     if filetype == "Mack":
 #        reg = re.compile(r'.*?Year:(\w*).*?MODEL\) (.*?)\n.*?ENGINE PACKAGE (.*?)\n.*?TRANSMISSION (.*?)\n.*?FRONT AXLE.*?AXLE.*?AXLE (.*?)\n.*?REAR AXLES - TANDEM (.*?)\n.*?REAR AXLE RATIO RATIO (\d\.\d\d).*?SUSPENSION - TANDEM (.*?)\n.*?DIFFERENTIAL (.*?)\n.*?WHEELBASE (.*?)\n.*?FUEL TANK - LH (.*?)\n.*?FIFTH WHEEL (.*?)\n.*?SLEEPER BOX (.*?)\n.*?DOOR OPENING OPTIONS (.*?)\n.*?MIRRORS - EXTERIOR (.*?)\n.*?REFRIGERATOR (.*?)\n.*?INVERTER - POWER (.*?)\n.*?TIRES BRAND/TYPE - FRONT (.*?)\n.*?WHEELS - FRONT (.*?)\n.*?TIRES BRAND/TYPE - REAR (.*?)\n.*?WHEELS - REAR (.*?)\n.*?PAINT COLOR - AREA A (.*?)\n.*?PRICE BOOK\nLEVEL:\n(.*?)\n',g,s,)
-        mackRegexMatches = re.findall(Mackregex, file)
+        mackRegexMatches = re.findall(mackRegex, file)
+        mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches,"C:\\airtabletest\\mackregexmatches.txt","")
-            print(mackRegexMatches)
+            writefile(mackRegexMatches,"C:\\airtabletest\\mackRegexmatches.txt","")
+        for n, x in enumerate(mackSpecificInfo[0]):
+            if mackUniqueInfoList[n] in headerConversionList:
+                fieldEntries[headerConversionList[mackUniqueInfoList[n]]] = x
         for x in mackRegexMatches:
-            if x[0] in macklist:
-                records.append(prepforupload(x))
+            if x[0] in headerConversionList:
+                fieldEntries.update(prepforupload(x))
+        fieldEntries["Status"] = "O"
     elif filetype == "Volvo":
-        print()
-        volvoRegexMatches = re.findall(Volvoregex, file)
+        volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
-            writefile(volvoRegexMatches,"C:\\airtabletest\\volvoregexmatches.txt","")
+            writefile(volvoRegexMatches,"C:\\airtabletest\\volvoRegexmatches.txt","")
             print(volvoRegexMatches)
         # for x in volvoRegexMatches:
         #     if x[0] in volvolist:
-        #         records.append(prepforupload(x))
-
-    posttoairtable(content)
+        #         fieldEntries.update(prepforupload(x))
+    return fields
     
 
 def prepforupload(content):
-    columnheader = converttoheader[content[0]]
-    fields = {columnheader:content[1]}
-    contentasjson = {"fields":fields}
-
+    columnheader = headerConversionList[content[0]]
+    contentasjson = {columnheader:content[1]}
+    # if debug == True:
+    #     print(contentasjson)
     return contentasjson
 
-def posttoairtable(content):                                # uploads the data to Airtable
+def uploadDataToAirtable(content):                                # uploads the data to Airtable
     headers = {
         "Authorization":str("Bearer "+api_key),
         "User-Agent":"Python Script",
@@ -142,6 +162,6 @@ if debug == True and sendairtabletestdata == True:
             }
         ]
     }
-    posttoairtable(testdata)
+    uploadDataToAirtable(testdata)
 else:
     main()
