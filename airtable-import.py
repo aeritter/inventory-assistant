@@ -15,25 +15,49 @@ with open('C:\\airtabletest\\api_key.txt', 'r') as key:     # location of .txt f
 with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt file containing URL for the table in Airtable 
     url = url.read()                                        #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-pdfFolderLocation = 'C:\\airtabletest\\python-test\\'              # location of .pdf files
-pdftotextExecutable = 'C:\\airtabletest\\pdftotext'           # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
-mackRegex = re.compile(r'^(.+?) {2,}(.*)\n', flags=re.M)
-mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S)
-volvoRegex = re.compile(r'')
+pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
+pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
+mackRegex = re.compile(r'^(?:\S{6}  )?(.+?) {2,}(.*)\n', flags=re.M)
+mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
-macklist = ['CHASSIS (BASE MODEL)']
+volvoRegex = re.compile(r'')
 volvolist = []
-    # dictionary containing headers pulled from file and their respective values in Airtable
-headerConversionList = {
-    'Model':'Model',                        'GSO':'Order Number',
+
+    #       Dictionary containing headers pulled from file and their respective values in Airtable
+    #
+    #   FORMAT:     'Name of variable identifier':['Name of column in Airtable', r'insert RegEx for variable here']
+    #
+    #       This is a Python dictionary, containing keys for the variable identifiers, and values which contain
+    #   a list, with the first entry in the list being the matching Airtable column and the second entry in the
+    #   list being the RegEx string needed to pull out the important information from the matched variable.
+    #       If no extra parsing needs to be done for the variable, there is no need to place a second item in a
+    #   list, but the value in the key:value pair always needs to be a list (contain brackets)
+    #
+    #   Valid entry examples:   'T-MODEL':['Model'],
+    #                           'TRUCK MODEL':['Model',r'\d'],
+    #                           'MODEL':['Model',]
+    #                           'ENGINE':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)']
+
+    #   That last example converts this:    MP7-425M MACK 425HP @ 1500-180
+    #   To this:                            {'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}
+
+headerConversionList = {        
+    'Model':['Model'],
+    'GSO':['Order Number'],
     # 'Chassis Number':'Chassis Number',
-    'Model Year':'Year',                    
+    'Model Year':['Year'],
     # 'CHASSIS (BASE MODEL)':'Chassis',
-           'TRANSMISSION':'Trans Model',
-    'FRONT AXLE':'Front Axle',              'REAR AXLES - TANDEM':'Rear Axle',
-    'REAR AXLE RATIO':'Ratio',              'WHEELBASE':'Wheelbase',
-    'SLEEPER BOX':'Sleeper',                'PAINT COLOR - AREA A':'Color',
-    'PAINT COLOR - FIRST COLOR':'Color'
+    'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
+    'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
+    'TRANSMISSION':['Trans Model'],
+    'FRONT AXLE':['Front Axle',r'\.*?(\d{5})#'],
+    'REAR AXLES - TANDEM':['Rear Axle',r'\.*?(\d{5})#'],
+    'REAR AXLE RATIO':['Ratio',r'\.*?(\d.\d\d)'],
+    'WHEELBASE':['Wheelbase'],
+    'SLEEPER BOX':['Sleeper'],
+    'PAINT COLOR - AREA A':['Color'],
+    'PAINT COLOR - FIRST COLOR':['Color']
     
 }
 
@@ -82,7 +106,7 @@ def main():
                     if debug == True:                   # create a regex debug file
                         writefile(n, filepath, " (debug).txt")
                     else:                               # if not debugging, move pdfs to Done folder
-                        os.rename(filepath+'.pdf', pdfFolderLocation+"\\Done\\"+filename)
+                        filesToMoveToDone.append([filepath+'.pdf', filename])
                     records.append(dataimport(n, filetype))
                     os.remove(filepath+'.txt')
 
@@ -98,8 +122,9 @@ def writefile(n, filepath, extension):                      # write file for deb
     a.write(str(n))
     a.close()
 
+
 def dataimport(file, filetype):                             #   takes the file and processes it to take out the relevant information
-    time.sleep(.4)                                          #   according to which vendor it came from, then returns the fields for
+    # time.sleep(.4)                                          #   according to which vendor it came from, then returns the fields for
     print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
 
     fieldEntries = {}
@@ -112,10 +137,11 @@ def dataimport(file, filetype):                             #   takes the file a
             writefile(mackRegexMatches,"C:\\airtabletest\\mackRegexmatches.txt","")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
-                fieldEntries[headerConversionList[mackUniqueInfoList[n]]] = x
+                fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
         for x in mackRegexMatches:
             if x[0] in headerConversionList:
                 fieldEntries.update(prepforupload(x))
+        fieldEntries["Make"] = "Mack"
         fieldEntries["Status"] = "O"
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
@@ -126,14 +152,20 @@ def dataimport(file, filetype):                             #   takes the file a
         #     if x[0] in volvolist:
         #         fieldEntries.update(prepforupload(x))
     return fields
-    
+
 
 def prepforupload(content):
-    columnheader = headerConversionList[content[0]]
-    contentasjson = {columnheader:content[1]}
-    # if debug == True:
-    #     print(contentasjson)
-    return contentasjson
+    columnHeader = headerConversionList[content[0]]
+    preppedData = {}
+    if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
+        for x in range(0,len(columnHeader),2):
+            preppedData[columnHeader[x]] = re.search(columnHeader[x+1],content[1]).group(1)
+    else:
+        preppedData[columnHeader[0]] = content[1]
+
+    # print(preppedData)
+    return preppedData
+
 
 def uploadDataToAirtable(content):                                # uploads the data to Airtable
     headers = {
@@ -144,6 +176,9 @@ def uploadDataToAirtable(content):                                # uploads the 
     x = requests.post(url,data=None,json=content,headers=headers)
     print("Post response: ",x.json())
     print("\n Post HTTP code:", x)
+    if x == "<Response [200]>":                                 # if Airtable upload successful, move PDF files to Done folder
+        for y in filesToMoveToDone:
+            os.rename(y[0], pdfFolderLocation+"\\Done\\"+y[1])
 
 if debug == True and sendairtabletestdata == True:
     testdata={
