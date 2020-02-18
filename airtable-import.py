@@ -18,7 +18,7 @@ with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt
 pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
 pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
-mackRegex = re.compile(r'^(?:\S{6}  )?(.+?) {2,}(.*)\n', flags=re.M)
+mackRegex = re.compile(r'^(?:\S{6} {2,}|)(.{2,32})(?=\b) +(.*)\n', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'')
@@ -33,6 +33,9 @@ volvolist = []
     #   list being the RegEx string needed to pull out the important information from the matched variable.
     #       If no extra parsing needs to be done for the variable, there is no need to place a second item in a
     #   list, but the value in the key:value pair always needs to be a list (contain brackets)
+    #       A list is used instead of a dictionary because it may be necessary to have two or more lines of RegEx
+    #   in order to parse all variations of a string for the same header (meaning multiple instances of the header,
+    #   which cannot coexist within a dictionary).
     #
     #   Valid entry examples:   'T-MODEL':['Model'],
     #                           'TRUCK MODEL':['Model',r'\d'],
@@ -107,7 +110,7 @@ def main():
                         writefile(n, filepath, " (debug).txt")
                     else:                               # if not debugging, move pdfs to Done folder
                         filesToMoveToDone.append([filepath+'.pdf', filename])
-                    records.append(dataimport(n, filetype))
+                    records.append(dataimport(n, filetype, filename))
                     os.remove(filepath+'.txt')
 
                 print(filename)
@@ -123,7 +126,7 @@ def writefile(n, filepath, extension):                      # write file for deb
     a.close()
 
 
-def dataimport(file, filetype):                             #   takes the file and processes it to take out the relevant information
+def dataimport(file, filetype, filename):                             #   takes the file and processes it to take out the relevant information
     # time.sleep(.4)                                          #   according to which vendor it came from, then returns the fields for
     print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
 
@@ -134,7 +137,7 @@ def dataimport(file, filetype):                             #   takes the file a
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches,"C:\\airtabletest\\mackRegexmatches.txt","")
+            writefile(mackRegexMatches,"C:\\airtabletest\\python-test\\"+filename+" (regexmatches)",".txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
@@ -159,7 +162,8 @@ def prepforupload(content):
     preppedData = {}
     if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
         for x in range(0,len(columnHeader),2):
-            preppedData[columnHeader[x]] = re.search(columnHeader[x+1],content[1]).group(1)
+            if re.search(columnHeader[x+1],content[1]) != None:
+                preppedData[columnHeader[x]] = re.search(columnHeader[x+1],content[1]).group(1)
     else:
         preppedData[columnHeader[0]] = content[1]
 
@@ -174,7 +178,7 @@ def uploadDataToAirtable(content):                                # uploads the 
         "Content-Type":"application/json"
     }
     x = requests.post(url,data=None,json=content,headers=headers)
-    print("Post response: ",x.json())
+    print("\n\nPost response: ",x.json())
     print("\n Post HTTP code:", x)
     if x == "<Response [200]>":                                 # if Airtable upload successful, move PDF files to Done folder
         for y in filesToMoveToDone:
