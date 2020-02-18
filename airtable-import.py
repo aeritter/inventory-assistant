@@ -53,11 +53,14 @@ headerConversionList = {
     # 'CHASSIS (BASE MODEL)':'Chassis',
     'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
     'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
-    'TRANSMISSION':['Trans Model'],
+    'TRANSMISSION':['Trans Model','','Transmission',r'(MACK|ALLISON)'],
     'FRONT AXLE':['Front Axle',r'\.*?(\d{5})#'],
     'REAR AXLES - TANDEM':['Rear Axle',r'\.*?(\d{5})#'],
     'REAR AXLE RATIO':['Ratio',r'\.*?(\d.\d\d)'],
+    'REAR SUSPENSION - TANDEM':['Suspension',r''],
     'WHEELBASE':['Wheelbase'],
+    'TIRES BRAND/TYPE - REAR':['RR Tire Size',r'^.*?(\d\dR.*?) '],
+    'TIRES BRAND/TYPE - FRONT':['FF Tire Size',r'^.*?(\d\dR.*?) '],
     'SLEEPER BOX':['Sleeper'],
     'PAINT COLOR - AREA A':['Color'],
     'PAINT COLOR - FIRST COLOR':['Color']
@@ -162,8 +165,12 @@ def prepforupload(content):
     preppedData = {}
     if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
         for x in range(0,len(columnHeader),2):
-            if re.search(columnHeader[x+1],content[1]) != None:
-                preppedData[columnHeader[x]] = re.search(columnHeader[x+1],content[1]).group(1)
+            search = re.search(columnHeader[x+1],content[1])
+            if search != None:
+                if len(search.groups()) > 0:
+                    preppedData[columnHeader[x]] = search.group(1)
+                else:
+                    preppedData[columnHeader[x]] = content[1]
     else:
         preppedData[columnHeader[0]] = content[1]
 
