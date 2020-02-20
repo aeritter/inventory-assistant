@@ -18,10 +18,10 @@ with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt
 pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
 pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
-mackRegex = re.compile(r'^(?:\S{6} {2,}|)(.{2,32})(?<! ) +(.*)\n', flags=re.M)
+mackRegex = re.compile(r'^(?:   \S{6} {2,}|)(.{2,32})(?<! ) +(.*)\n', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
-volvoRegex = re.compile(r'')
+volvoRegex = re.compile(r'^ {3,6}(\S{6}) +. +. +(.*?)  ', flags=re.M)
 volvolist = []
 
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
@@ -77,7 +77,7 @@ def main():
         for filename in os.listdir(pdfFolderLocation):
             if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
                                                                             #   and is a file, not a folder, then:
-                subprocess.run([pdftotextExecutable, '-nopgbrk', '-table', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
+                subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
                 filepath = pdfFolderLocation+str(filename)[:-4]           # create string of filepath to .txt file
                 filetype = "None"
                 print(filepath)
