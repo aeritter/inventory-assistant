@@ -18,11 +18,13 @@ with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt
 pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
 pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
-mackRegex = re.compile(r'^(?:\S{6} {2,}|)(.{2,32})(?=\b) +(.*)\n', flags=re.M)
+mackRegex = re.compile(r'^(?:\S{6} {2,}|)(.{2,32})(?<! ) +(.*)\n', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'')
 volvolist = []
+
+ignoreList = {'EQUIPMENT','ELECTRONICS'}
 
     #       Dictionary containing headers pulled from file and their respective values in Airtable
     #
@@ -53,7 +55,7 @@ headerConversionList = {
     # 'CHASSIS (BASE MODEL)':'Chassis',
     'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
     'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
-    'TRANSMISSION':['Trans Model','','Transmission',r'(MACK|ALLISON)'],
+    'TRANSMISSION':['Trans Model', '','Transmission',r'(MACK|ALLISON|EATON-FULLER)'],
     'FRONT AXLE':['Front Axle',r'\.*?(\d{5})#'],
     'REAR AXLES - TANDEM':['Rear Axle',r'\.*?(\d{5})#'],
     'REAR AXLE RATIO':['Ratio',r'\.*?(\d.\d\d)'],
@@ -145,7 +147,7 @@ def dataimport(file, filetype, filename):                             #   takes 
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
         for x in mackRegexMatches:
-            if x[0] in headerConversionList:
+            if x[0] in headerConversionList and x[1] not in ignoreList:
                 fieldEntries.update(prepforupload(x))
         fieldEntries["Make"] = "Mack"
         fieldEntries["Status"] = "O"
