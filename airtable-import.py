@@ -88,7 +88,7 @@ def main():
                 with open(filepath+'.txt', 'r+') as c:
                     n = c.read()
                 line1 = n.split('\n', 1)[0]                 # first line of .txt file
-                line2 = n.split('\n', 3)[2]                 # second line of .txt file
+                line2 = n.split('\n', 2)[1]                 # second line of .txt file
                 if "Welcome to Volvo" in line1:
                     filetype = "Volvo"
                 elif "GSO:" in line2:
@@ -155,7 +155,7 @@ def dataimport(file, filetype, filename):                             #   takes 
         volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
             writefile(volvoRegexMatches,"C:\\airtabletest\\volvoRegexmatches.txt","")
-            print(volvoRegexMatches)
+            # print(volvoRegexMatches)
         # for x in volvoRegexMatches:
         #     if x[0] in volvolist:
         #         fieldEntries.update(prepforupload(x))
