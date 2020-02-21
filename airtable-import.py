@@ -18,10 +18,10 @@ with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt
 pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
 pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
-mackRegex = re.compile(r'^(?:   \S{6} {2,}|)(.{2,32})(?<! ) +(.*)\n', flags=re.M)
-mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
+mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M)
+mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
-volvoRegex = re.compile(r'^ {3,6}(\S{6}) +. +. +(.*?)  ', flags=re.M)
+volvoRegex = re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M)
 volvolist = []
 
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
@@ -47,7 +47,8 @@ ignoreList = {'EQUIPMENT','ELECTRONICS'}
     #   That last example converts this:    MP7-425M MACK 425HP @ 1500-180
     #   To this:                            {'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}
 
-headerConversionList = {        
+headerConversionList = {       
+# Mack 
     'Model':['Model'],
     'GSO':['Order Number'],
     # 'Chassis Number':'Chassis Number',
@@ -65,7 +66,10 @@ headerConversionList = {
     'TIRES BRAND/TYPE - FRONT':['FF Tire Size',r'^.*?(\d\dR.*?) '],
     'SLEEPER BOX':['Sleeper'],
     'PAINT COLOR - AREA A':['Color'],
-    'PAINT COLOR - FIRST COLOR':['Color']
+    'PAINT COLOR - FIRST COLOR':['Color'],
+
+# Volvo
+    '008':['Model'],
     
 }
 
@@ -112,7 +116,7 @@ def main():
                 if filetype != "None":
                     print(filetype)
                     if debug == True:                   # create a regex debug file
-                        writefile(n, filepath, " (debug).txt")
+                        writefile(n, filepath, " (debug-pdftotext).txt")
                     else:                               # if not debugging, move pdfs to Done folder
                         filesToMoveToDone.append([filepath+'.pdf', filename])
                     records.append(dataimport(n, filetype, filename))
@@ -142,7 +146,7 @@ def dataimport(file, filetype, filename):                             #   takes 
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches,"C:\\airtabletest\\python-test\\"+filename+" (regexmatches)",".txt")
+            writefile(mackRegexMatches,"C:\\airtabletest\\python-test\\"+filename+" (debug-regexmatches)",".txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
@@ -156,9 +160,11 @@ def dataimport(file, filetype, filename):                             #   takes 
         if debug == True:
             writefile(volvoRegexMatches,"C:\\airtabletest\\volvoRegexmatches.txt","")
             # print(volvoRegexMatches)
-        # for x in volvoRegexMatches:
-        #     if x[0] in volvolist:
-        #         fieldEntries.update(prepforupload(x))
+        for x in volvoRegexMatches:
+            if x[0] in headerConversionList:
+                fieldEntries.update(prepforupload(x))
+        fieldEntries["Make"] = "Volvo"
+        fieldEntries["Status"] = "O"
     return fields
 
 
