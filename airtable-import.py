@@ -13,8 +13,8 @@ mainFolder = 'C:\\airtabletest\\'
 with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
     api_key = key.read()
 
-with open(mainFolder+'url.txt', 'r') as url:         #   location of .txt file containing URL for the table in Airtable 
-    url = url.read()                                        #   (found in api.airtable.com, not the same as the URL you see when browsing)
+with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
+    url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
 pdftotextExecutable = mainFolder+'pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
@@ -38,7 +38,7 @@ ignoreList = {'EQUIPMENT','ELECTRONICS'}
     #       A list is used instead of a dictionary because it may be necessary to have two or more lines of RegEx
     #   in order to parse all variations of a string for the same header (meaning multiple instances of the header,
     #   which cannot coexist within a dictionary).
-    #
+
     #   Valid entry examples:   'ENGINE':['Engine Make'],
     #                           'TRUCK MODEL':['Model',r'\d'],
     #                           'MODEL':['Model',],
@@ -50,7 +50,7 @@ ignoreList = {'EQUIPMENT','ELECTRONICS'}
     #   The first example simply copies
     #       the entire line:                MP7-425M MACK 425HP @ 1500-180
     #   Which would look like this:         {'Engine Make': 'MP7-425M MACK 425HP @ 1500-180'}
-    #
+    
     #       That converted example is then added to the rest of those types of entries which are finally uploaded  
     #   to Airtable, with the first value in each set being the column header (ex. Engine Make) and the second value 
     #   being the entry under the column for that vehicle.
@@ -111,7 +111,7 @@ def main():
                 pdfFile = str(pdfFolderLocation+str(filename))           # create string of filepath to .pdf file
                 txtFile = pdfFile[:-3]+'txt'
                 filetype = "None"
-                print(txtFile)
+                
                 while os.path.exists(txtFile) != True:
                     time.sleep(5)
                     print("Waiting for file creation")
@@ -166,14 +166,13 @@ def writefile(n, filepath, extension):                      # write file for deb
     a.close()
 
 
-def dataimport(file, filetype, filename):                             #   takes the file and processes it to take out the relevant information
-    # time.sleep(.4)                                          #   according to which vendor it came from, then returns the fields for
+def dataimport(file, filetype, filename):                   #       Takes the file and processes it to take out the relevant information
+                                                            #   according to which vendor it came from, then returns the fields for
     print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
-
     fieldEntries = {}
     fields = {"fields":fieldEntries}
+
     if filetype == "Mack":
-#        reg = re.compile(r'.*?Year:(\w*).*?MODEL\) (.*?)\n.*?ENGINE PACKAGE (.*?)\n.*?TRANSMISSION (.*?)\n.*?FRONT AXLE.*?AXLE.*?AXLE (.*?)\n.*?REAR AXLES - TANDEM (.*?)\n.*?REAR AXLE RATIO RATIO (\d\.\d\d).*?SUSPENSION - TANDEM (.*?)\n.*?DIFFERENTIAL (.*?)\n.*?WHEELBASE (.*?)\n.*?FUEL TANK - LH (.*?)\n.*?FIFTH WHEEL (.*?)\n.*?SLEEPER BOX (.*?)\n.*?DOOR OPENING OPTIONS (.*?)\n.*?MIRRORS - EXTERIOR (.*?)\n.*?REFRIGERATOR (.*?)\n.*?INVERTER - POWER (.*?)\n.*?TIRES BRAND/TYPE - FRONT (.*?)\n.*?WHEELS - FRONT (.*?)\n.*?TIRES BRAND/TYPE - REAR (.*?)\n.*?WHEELS - REAR (.*?)\n.*?PAINT COLOR - AREA A (.*?)\n.*?PRICE BOOK\nLEVEL:\n(.*?)\n',g,s,)
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
@@ -186,6 +185,7 @@ def dataimport(file, filetype, filename):                             #   takes 
                 fieldEntries.update(prepforupload(x))
         fieldEntries["Make"] = "Mack"
         fieldEntries["Status"] = "O"
+
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
@@ -197,6 +197,7 @@ def dataimport(file, filetype, filename):                             #   takes 
         fieldEntries["Status"] = "O"
         if re.search(r'\d{6}', filename) != None:
             fieldEntries["Order Number"] = re.search(r'\d{6}', filename).group(0)
+
     return fields
 
 
@@ -214,7 +215,6 @@ def prepforupload(content):
     else:
         preppedData[columnHeader[0]] = content[1]
 
-    # print(preppedData)
     return preppedData
 
 
@@ -226,8 +226,9 @@ def uploadDataToAirtable(content):                                # uploads the 
     }
     x = requests.post(url,data=None,json=content,headers=headers)
     print("\n\nPost response: ",x.json())
-    print("\n Post HTTP code:", x)
-    if x == "<Response [200]>":                                 # if Airtable upload successful, move PDF files to Done folder
+    print("\nPost HTTP code:", x.status_code)
+    if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
+        print("Success")
         return "Successful"
 
 
