@@ -9,14 +9,16 @@ import json, requests
 debug = True
 sendairtabletestdata = False
 
-with open('C:\\airtabletest\\api_key.txt', 'r') as key:     # location of .txt file containing API token
+mainFolder = 'C:\\airtabletest\\'
+
+with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
     api_key = key.read()
 
-with open('C:\\airtabletest\\url.txt', 'r') as url:         #   location of .txt file containing URL for the table in Airtable 
+with open(mainFolder+'url.txt', 'r') as url:         #   location of .txt file containing URL for the table in Airtable 
     url = url.read()                                        #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-pdfFolderLocation = 'C:\\airtabletest\\python-test\\'       # location of .pdf files
-pdftotextExecutable = 'C:\\airtabletest\\pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
+pdftotextExecutable = mainFolder+'pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
 mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
@@ -63,14 +65,32 @@ headerConversionList = {
     'REAR SUSPENSION - TANDEM':['Suspension',r''],
     'WHEELBASE':['Wheelbase'],
     'TIRES BRAND/TYPE - REAR':['RR Tire Size',r'^.*?(\d\dR.*?) '],
+    'WHEELS - FRONT':['FF Wheels',r'(ALUM)'],
     'TIRES BRAND/TYPE - FRONT':['FF Tire Size',r'^.*?(\d\dR.*?) '],
+    'WHEELS - REAR':['RR Wheels',r'(ALUM)'],
     'SLEEPER BOX':['Sleeper'],
     'PAINT COLOR - AREA A':['Color'],
     'PAINT COLOR - FIRST COLOR':['Color'],
 
 # Volvo
     '008':['Model'],
-    
+    'A19':['Year', r'(\d*?) '],
+    '2CX':['Sleeper',r'(\d.*?(?:-ROOF|ROOF)|DAY CAB)'],
+    '101':['Engine Make',r'(\w*?) ', 'Engine Model',r'^.*? (\w*?) ', 'HP',r'(\d{3}HP)'],
+    '270':['Trans Model','','Transmission',r'(VOLVO|ALLISON)'],
+    '330':['Rear Axle',r'.*? (\d.*?)LB'],
+    '350':['Suspension'],
+    '370':['Front Axle',r'.*? (\d.*?)LB'],
+    'TAX':['Ratio',r'(.*?) '],
+    '400':['Wheelbase',r'(\d*?")'],
+    '093':['FF Tire Size',r'^.*?(\d\dR.*?) '],
+    '084':['FF Wheels',r'(ALUM|STEEL)'],
+    '094':['RR Tire Size',r'^.*?(\d\dR.*?) '],
+    '085':['RR Wheels',r'(ALUM|STEEL)'],
+    '980':['Color']
+
+
+
 }
 
 
@@ -79,17 +99,17 @@ def main():
         records = []
         content = {"records":records}
         for filename in os.listdir(pdfFolderLocation):
-            if str(filename)[-3:] != 'txt' and str(filename)[-4] == '.':    #   if filename doesn't contain 'txt' at the end
-                                                                            #   and is a file, not a folder, then:
+            if str(filename)[-3:] == 'pdf':    #   if filename is a PDF
                 subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
-                filepath = pdfFolderLocation+str(filename)[:-4]           # create string of filepath to .txt file
+                pdfFile = str(pdfFolderLocation+str(filename))           # create string of filepath to .pdf file
+                txtFile = pdfFile[:-3]+'txt'
                 filetype = "None"
-                print(filepath)
-                while os.path.exists(filepath+".txt") != True:
+                print(txtFile)
+                while os.path.exists(txtFile) != True:
                     time.sleep(5)
                     print("Waiting for file creation")
 
-                with open(filepath+'.txt', 'r+') as c:
+                with open(txtFile, 'r+') as c:
                     n = c.read()
                 line1 = n.split('\n', 1)[0]                 # first line of .txt file
                 line2 = n.split('\n', 2)[1]                 # second line of .txt file
@@ -103,7 +123,7 @@ def main():
                     x = 20
                     while x > 0:
                         try:
-                            os.rename(filepath+".txt", pdfFolderLocation+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
+                            os.rename(txtFile, pdfFolderLocation+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
                             break
                         except PermissionError:
                             time.sleep(3)
@@ -116,11 +136,11 @@ def main():
                 if filetype != "None":
                     print(filetype)
                     if debug == True:                   # create a regex debug file
-                        writefile(n, filepath, " (debug-pdftotext).txt")
+                        writefile(n, txtFile[:-4], " (debug-pdftotext).txt")
                     else:                               # if not debugging, move pdfs to Done folder
-                        filesToMoveToDone.append([filepath+'.pdf', filename])
+                        filesToMoveToDone.append([pdfFile, filename])
                     records.append(dataimport(n, filetype, filename))
-                    os.remove(filepath+'.txt')
+                    os.remove(txtFile)
 
                 print(filename)
         print(content)
@@ -146,7 +166,7 @@ def dataimport(file, filetype, filename):                             #   takes 
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches,"C:\\airtabletest\\python-test\\"+filename+" (debug-regexmatches)",".txt")
+            writefile(mackRegexMatches, pdfFolderLocation+filename+" (debug-regexmatches)",".txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
@@ -158,13 +178,14 @@ def dataimport(file, filetype, filename):                             #   takes 
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
-            writefile(volvoRegexMatches,"C:\\airtabletest\\volvoRegexmatches.txt","")
-            # print(volvoRegexMatches)
+            writefile(volvoRegexMatches, pdfFolderLocation+filename+" (debug-regexmatches)",".txt")
         for x in volvoRegexMatches:
             if x[0] in headerConversionList:
                 fieldEntries.update(prepforupload(x))
         fieldEntries["Make"] = "Volvo"
         fieldEntries["Status"] = "O"
+        if re.search(r'\d{6}', filename) != None:
+            fieldEntries["Order Number"] = re.search(r'\d{6}', filename).group(0)
     return fields
 
 
