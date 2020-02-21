@@ -7,7 +7,6 @@ import re, os.path, subprocess, time
 import json, requests
 
 debug = True
-sendairtabletestdata = False
 
 mainFolder = 'C:\\airtabletest\\'
 
@@ -19,7 +18,6 @@ with open(mainFolder+'url.txt', 'r') as url:         #   location of .txt file c
 
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
 pdftotextExecutable = mainFolder+'pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
-filesToMoveToDone = []                                      # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
 mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
@@ -41,13 +39,21 @@ ignoreList = {'EQUIPMENT','ELECTRONICS'}
     #   in order to parse all variations of a string for the same header (meaning multiple instances of the header,
     #   which cannot coexist within a dictionary).
     #
-    #   Valid entry examples:   'T-MODEL':['Model'],
+    #   Valid entry examples:   'ENGINE':['Engine Make'],
     #                           'TRUCK MODEL':['Model',r'\d'],
-    #                           'MODEL':['Model',]
-    #                           'ENGINE':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)']
+    #                           'MODEL':['Model',],
+    #                           'ENGINE':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)'],
 
     #   That last example converts this:    MP7-425M MACK 425HP @ 1500-180
     #   To this:                            {'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}
+
+    #   The first example simply copies
+    #       the entire line:                MP7-425M MACK 425HP @ 1500-180
+    #   Which would look like this:         {'Engine Make': 'MP7-425M MACK 425HP @ 1500-180'}
+    #
+    #       That converted example is then added to the rest of those types of entries which are finally uploaded  
+    #   to Airtable, with the first value in each set being the column header (ex. Engine Make) and the second value 
+    #   being the entry under the column for that vehicle.
 
 headerConversionList = {       
 # Mack 
@@ -96,6 +102,7 @@ headerConversionList = {
 
 def main():
 #    try:
+        filesToMoveToDone = [] # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
         records = []
         content = {"records":records}
         for filename in os.listdir(pdfFolderLocation):
@@ -123,7 +130,7 @@ def main():
                     x = 20
                     while x > 0:
                         try:
-                            os.rename(txtFile, pdfFolderLocation+"\\Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
+                            os.rename(txtFile, pdfFolderLocation+"Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
                             break
                         except PermissionError:
                             time.sleep(3)
@@ -136,7 +143,7 @@ def main():
                 if filetype != "None":
                     print(filetype)
                     if debug == True:                   # create a regex debug file
-                        writefile(n, txtFile[:-4], " (debug-pdftotext).txt")
+                        writefile(n, pdfFolderLocation+"Debug\\"+filename[:-4], " (debug-pdftotext).txt")
                     else:                               # if not debugging, move pdfs to Done folder
                         filesToMoveToDone.append([pdfFile, filename])
                     records.append(dataimport(n, filetype, filename))
@@ -144,7 +151,11 @@ def main():
 
                 print(filename)
         print(content)
-        uploadDataToAirtable(content)
+        uploadData = uploadDataToAirtable(content)
+        if uploadData == "Successful":
+            if debug != True:
+                for y in filesToMoveToDone:
+                    os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
  #   except:
  #       print("something went wrong")
 
@@ -166,7 +177,7 @@ def dataimport(file, filetype, filename):                             #   takes 
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches, pdfFolderLocation+filename+" (debug-regexmatches)",".txt")
+            writefile(mackRegexMatches, pdfFolderLocation+"Debug\\"+filename+" (debug-regexmatches)",".txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
@@ -178,7 +189,7 @@ def dataimport(file, filetype, filename):                             #   takes 
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
-            writefile(volvoRegexMatches, pdfFolderLocation+filename+" (debug-regexmatches)",".txt")
+            writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\"+filename+" (debug-regexmatches)",".txt")
         for x in volvoRegexMatches:
             if x[0] in headerConversionList:
                 fieldEntries.update(prepforupload(x))
@@ -217,26 +228,7 @@ def uploadDataToAirtable(content):                                # uploads the 
     print("\n\nPost response: ",x.json())
     print("\n Post HTTP code:", x)
     if x == "<Response [200]>":                                 # if Airtable upload successful, move PDF files to Done folder
-        for y in filesToMoveToDone:
-            os.rename(y[0], pdfFolderLocation+"\\Done\\"+y[1])
+        return "Successful"
 
-if debug == True and sendairtabletestdata == True:
-    testdata={
-        "records": [
-            {
-                "fields": {
-                    "Name":"TULtest",
-                    "Status":"Does Not Exist"
-                }
-            },
-            {
-                "fields": {
-                    "Name":"TULtest2",
-                    "Status":"Does Not Exist"
-                }
-            }
-        ]
-    }
-    uploadDataToAirtable(testdata)
-else:
-    main()
+
+main()
