@@ -22,7 +22,6 @@ mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M)
-volvolist = []
 
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
 
@@ -95,9 +94,8 @@ headerConversionList = {
     '085':['RR Wheels',r'(ALUM|STEEL)'],
     '980':['Color']
 
-
-
 }
+
 
 def checkFolder():
     filesInFolder = []
@@ -106,71 +104,46 @@ def checkFolder():
             filesInFolder.append(filename)
     return filesInFolder
 
-def main(filename):
+
+def startPDFProcessing(filename):
    try:
-        records = []
-        content = {"records":records}
-
-        subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
-        # txt = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True)#pdfFolderLocation+str(filename)]) # convert pdf to text
-        # print(txt.stdout)
-        pdfFile = str(pdfFolderLocation+str(filename))           # create string of filepath to .pdf file
-        txtFile = pdfFile[:-3]+'txt'
+        fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
         filetype = "None"
-        
-        while os.path.exists(txtFile) != True:
-            time.sleep(5)
-            print("Waiting for file creation")
 
-        with open(txtFile, 'r+') as c:
-            n = c.read()
-        line1 = n.split('\n', 1)[0]                 # first line of .txt file
-        line2 = n.split('\n', 2)[1]                 # second line of .txt file
+        line1 = fileText.split('\n', 1)[0]                 # first line of .txt file
+        line2 = fileText.split('\n', 2)[1]                 # second line of .txt file
         if "Welcome to Volvo" in line1:
             filetype = "Volvo"
         elif "GSO:" in line2:
             filetype = "Mack"
         else:
             print("Unknown format")
-            filetype = "None"
-            x = 20
-            while x > 0:
-                try:
-                    os.rename(txtFile, pdfFolderLocation+"Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
-                    break
-                except PermissionError:
-                    time.sleep(3)
-                    print("Permission error. Trying {x} more time(s)") 
-                    x -= 1
-                except FileExistsError:
-                    print("File exists")
-                    break
+            try:
+                writefile(fileText, pdfFolderLocation+"Errored\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
+            except PermissionError:
+                print("Permission error.")
+            except FileExistsError:
+                print("File exists")
 
         if filetype != "None":
-            # print(filetype)
+            LocationAndName = [pdfFolderLocation+str(filename), filename]
             if debug == True:                   # create a regex debug file
-                writefile(n, pdfFolderLocation+"Debug\\"+filename[:-4], " (debug-pdftotext).txt")
+                writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-pdftotext).txt")
             else:                               # if not debugging, move pdfs to Done folder
-                filesToMoveToDone.append([pdfFile, filename])
-            os.remove(txtFile)
-            f = [pdfFile, filename]
-            return dataimport(n, filetype, filename), f
-            # os.remove(txtFile)
-
-        print(filename)
-        print(content)
+                filesToMoveToDone.append(LocationAndName)
+            return createFieldEntries(fileText, filetype, filename), LocationAndName
 
    except:
        print("something went wrong")
 
 
-def writefile(n, filepath, extension):                      # write file for debugging
+def writefile(string, filepath, extension):                      # write file for debugging
     a = open(filepath+extension, 'w')
-    a.write(str(n))
+    a.write(str(string))
     a.close()
 
 
-def dataimport(file, filetype, filename):                   #       Takes the file and processes it to take out the relevant information
+def createFieldEntries(file, filetype, filename):                   #       Takes the file and processes it to take out the relevant information
                                                             #   according to which vendor it came from, then returns the fields for
     # print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
     fieldEntries = {}
@@ -180,23 +153,23 @@ def dataimport(file, filetype, filename):                   #       Takes the fi
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
         if debug == True:
-            writefile(mackRegexMatches, pdfFolderLocation+"Debug\\"+filename+" (debug-regexmatches)",".txt")
+            writefile(mackRegexMatches, pdfFolderLocation+"Debug\\", filename+" (debug-regexmatches).txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
         for x in mackRegexMatches:
             if x[0] in headerConversionList and x[1] not in ignoreList:
-                fieldEntries.update(prepforupload(x))
+                fieldEntries.update(runRegExMatching(x))
         fieldEntries["Make"] = "Mack"
         fieldEntries["Status"] = "O"
 
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
         if debug == True:
-            writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\"+filename+" (debug-regexmatches)",".txt")
+            writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\", filename+" (debug-regexmatches).txt")
         for x in volvoRegexMatches:
             if x[0] in headerConversionList:
-                fieldEntries.update(prepforupload(x))
+                fieldEntries.update(runRegExMatching(x))
         fieldEntries["Make"] = "Volvo"
         fieldEntries["Status"] = "O"
         if re.search(r'\d{6}', filename) != None:
@@ -205,7 +178,7 @@ def dataimport(file, filetype, filename):                   #       Takes the fi
     return fields
 
 
-def prepforupload(content):
+def runRegExMatching(content):
     columnHeader = headerConversionList[content[0]]
     preppedData = {}
     if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
@@ -235,15 +208,20 @@ def uploadDataToAirtable(content):                                # uploads the 
         print("Success\n")
         return "Successful"
 
+
 def moveToDone(FilesToMove):
     for y in FilesToMove:
-        os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
+        try:
+            os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
+        except FileExistsError:
+            print("File",y[1],"exists in Done folder.")
 
-def multithreading(pool, files):
+
+def main(pool, files):
         start_time = time.time()
         records = []
         filesToMoveToDone = []
-        threads = pool.imap_unordered(main, files)
+        threads = pool.imap_unordered(startPDFProcessing, files)
 
         for x in threads:
             records.append(x[0])
@@ -261,14 +239,12 @@ def multithreading(pool, files):
 
 
 
-
 if __name__ == "__main__":
     p = multiprocessing.Pool()
-
     while True:
         files = checkFolder()
         if len(files) > 0:
-            multithreading(p, files)
+            main(p, files)
         else:
             print("No files found.")
-        time.sleep(20)
+        time.sleep(10)
