@@ -4,7 +4,7 @@
 """
 
 import re, os.path, subprocess, time
-import json, requests
+import json, requests, multiprocessing
 
 debug = True
 
@@ -99,65 +99,69 @@ headerConversionList = {
 
 }
 
+def checkFolder():
+    filesInFolder = []
+    for filename in os.listdir(pdfFolderLocation):
+        if str(filename)[-3:] == 'pdf':
+            filesInFolder.append(filename)
+    return filesInFolder
 
-def main():
-#    try:
-        filesToMoveToDone = [] # list storing locations of files that will be moved to the Done folder, if Airtable upload was successful
+def main(filename):
+   try:
         records = []
         content = {"records":records}
-        for filename in os.listdir(pdfFolderLocation):
-            if str(filename)[-3:] == 'pdf':    #   if filename is a PDF
-                subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
-                pdfFile = str(pdfFolderLocation+str(filename))           # create string of filepath to .pdf file
-                txtFile = pdfFile[:-3]+'txt'
-                filetype = "None"
-                
-                while os.path.exists(txtFile) != True:
-                    time.sleep(5)
-                    print("Waiting for file creation")
 
-                with open(txtFile, 'r+') as c:
-                    n = c.read()
-                line1 = n.split('\n', 1)[0]                 # first line of .txt file
-                line2 = n.split('\n', 2)[1]                 # second line of .txt file
-                if "Welcome to Volvo" in line1:
-                    filetype = "Volvo"
-                elif "GSO:" in line2:
-                    filetype = "Mack"
-                else:
-                    print("Unknown format")
-                    filetype = "None"
-                    x = 20
-                    while x > 0:
-                        try:
-                            os.rename(txtFile, pdfFolderLocation+"Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
-                            break
-                        except PermissionError:
-                            time.sleep(3)
-                            print("Permission error. Trying {x} more time(s)") 
-                            x -= 1
-                        except FileExistsError:
-                            print("File exists")
-                            break
+        subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename)]) # convert pdf to text
+        # txt = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True)#pdfFolderLocation+str(filename)]) # convert pdf to text
+        # print(txt.stdout)
+        pdfFile = str(pdfFolderLocation+str(filename))           # create string of filepath to .pdf file
+        txtFile = pdfFile[:-3]+'txt'
+        filetype = "None"
+        
+        while os.path.exists(txtFile) != True:
+            time.sleep(5)
+            print("Waiting for file creation")
 
-                if filetype != "None":
-                    print(filetype)
-                    if debug == True:                   # create a regex debug file
-                        writefile(n, pdfFolderLocation+"Debug\\"+filename[:-4], " (debug-pdftotext).txt")
-                    else:                               # if not debugging, move pdfs to Done folder
-                        filesToMoveToDone.append([pdfFile, filename])
-                    records.append(dataimport(n, filetype, filename))
-                    os.remove(txtFile)
+        with open(txtFile, 'r+') as c:
+            n = c.read()
+        line1 = n.split('\n', 1)[0]                 # first line of .txt file
+        line2 = n.split('\n', 2)[1]                 # second line of .txt file
+        if "Welcome to Volvo" in line1:
+            filetype = "Volvo"
+        elif "GSO:" in line2:
+            filetype = "Mack"
+        else:
+            print("Unknown format")
+            filetype = "None"
+            x = 20
+            while x > 0:
+                try:
+                    os.rename(txtFile, pdfFolderLocation+"Errored\\"+filename[:-4]+" unknown format.txt")  # move to errored folder if not matched
+                    break
+                except PermissionError:
+                    time.sleep(3)
+                    print("Permission error. Trying {x} more time(s)") 
+                    x -= 1
+                except FileExistsError:
+                    print("File exists")
+                    break
 
-                print(filename)
+        if filetype != "None":
+            # print(filetype)
+            if debug == True:                   # create a regex debug file
+                writefile(n, pdfFolderLocation+"Debug\\"+filename[:-4], " (debug-pdftotext).txt")
+            else:                               # if not debugging, move pdfs to Done folder
+                filesToMoveToDone.append([pdfFile, filename])
+            os.remove(txtFile)
+            f = [pdfFile, filename]
+            return dataimport(n, filetype, filename), f
+            # os.remove(txtFile)
+
+        print(filename)
         print(content)
-        uploadData = uploadDataToAirtable(content)
-        if uploadData == "Successful":
-            if debug != True:
-                for y in filesToMoveToDone:
-                    os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
- #   except:
- #       print("something went wrong")
+
+   except:
+       print("something went wrong")
 
 
 def writefile(n, filepath, extension):                      # write file for debugging
@@ -168,7 +172,7 @@ def writefile(n, filepath, extension):                      # write file for deb
 
 def dataimport(file, filetype, filename):                   #       Takes the file and processes it to take out the relevant information
                                                             #   according to which vendor it came from, then returns the fields for
-    print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
+    # print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
     fieldEntries = {}
     fields = {"fields":fieldEntries}
 
@@ -228,8 +232,43 @@ def uploadDataToAirtable(content):                                # uploads the 
     print("\n\nPost response: ",x.json())
     print("\nPost HTTP code:", x.status_code)
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
-        print("Success")
+        print("Success\n")
         return "Successful"
 
+def moveToDone(FilesToMove):
+    for y in FilesToMove:
+        os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
 
-main()
+def multithreading(pool, files):
+        start_time = time.time()
+        records = []
+        filesToMoveToDone = []
+        threads = pool.imap_unordered(main, files)
+
+        for x in threads:
+            records.append(x[0])
+            filesToMoveToDone.append(x[1])
+        
+        print("Compute time: ",time.time()-start_time)
+
+        content = {"records":records}
+        sendData = uploadDataToAirtable(content)
+
+        if sendData == "Successful":
+            moveToDone(filesToMoveToDone)
+        else:
+            print("send unsuccessful")
+
+
+
+
+if __name__ == "__main__":
+    p = multiprocessing.Pool()
+
+    while True:
+        files = checkFolder()
+        if len(files) > 0:
+            multithreading(p, files)
+        else:
+            print("No files found.")
+        time.sleep(20)
