@@ -6,8 +6,6 @@
 import re, os.path, subprocess, time
 import json, requests, multiprocessing
 
-debug = True
-
 mainFolder = 'C:\\airtabletest\\'
 
 with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
@@ -17,7 +15,7 @@ with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt fil
     url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
-pdftotextExecutable = mainFolder+'pdftotext'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+pdftotextExecutable = mainFolder+'pdftotext.exe'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M)
 mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S) # pulls info that doesn't follow the main pattern
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
@@ -105,8 +103,8 @@ def checkFolder():
     return filesInFolder
 
 
-def startPDFProcessing(filename):
-   try:
+def startPDFProcessing(filename, **kwargs):
+#    try:
         fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
         filetype = "None"
 
@@ -117,43 +115,41 @@ def startPDFProcessing(filename):
         elif "GSO:" in line2:
             filetype = "Mack"
         else:
-            print("Unknown format")
+            print("Unknown format.")
             try:
                 writefile(fileText, pdfFolderLocation+"Errored\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
             except PermissionError:
                 print("Permission error.")
             except FileExistsError:
-                print("File exists")
+                print("File exists.")
 
         if filetype != "None":
             LocationAndName = [pdfFolderLocation+str(filename), filename]
-            if debug == True:                   # create a regex debug file
+
+            if 'debug' in kwargs:                   # create a regex debug file
                 writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-pdftotext).txt")
-            else:                               # if not debugging, move pdfs to Done folder
-                filesToMoveToDone.append(LocationAndName)
-            return createFieldEntries(fileText, filetype, filename), LocationAndName
 
-   except:
-       print("something went wrong")
+            return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName
+
+#    except:
+#        print("something went wrong.")
 
 
-def writefile(string, filepath, extension):                      # write file for debugging
+def writefile(string, filepath, extension):                 # write file for debugging
     a = open(filepath+extension, 'w')
     a.write(str(string))
     a.close()
 
 
-def createFieldEntries(file, filetype, filename):                   #       Takes the file and processes it to take out the relevant information
-                                                            #   according to which vendor it came from, then returns the fields for
-    # print(f"Importing {filetype} info")                     #   further formatting, to be uploaded using the Airtable API
-    fieldEntries = {}
-    fields = {"fields":fieldEntries}
+def createFieldEntries(file, filetype, filename, **kwargs):           #       Takes the file and processes it to take out the relevant information
+    fieldEntries = {}                                       #   according to which vendor it came from, then returns the fields for
+    fields = {"fields":fieldEntries}                        #   further formatting, to be uploaded using the Airtable API
 
     if filetype == "Mack":
         mackRegexMatches = re.findall(mackRegex, file)
         mackSpecificInfo = re.findall(mackSpecificInfoRegex, file)
-        if debug == True:
-            writefile(mackRegexMatches, pdfFolderLocation+"Debug\\", filename+" (debug-regexmatches).txt")
+        if 'debug' in kwargs:
+            writefile(mackRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         for n, x in enumerate(mackSpecificInfo[0]):
             if mackUniqueInfoList[n] in headerConversionList:
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
@@ -165,8 +161,8 @@ def createFieldEntries(file, filetype, filename):                   #       Take
 
     elif filetype == "Volvo":
         volvoRegexMatches = re.findall(volvoRegex, file)
-        if debug == True:
-            writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\", filename+" (debug-regexmatches).txt")
+        if 'debug' in kwargs:
+            writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         for x in volvoRegexMatches:
             if x[0] in headerConversionList:
                 fieldEntries.update(runRegExMatching(x))
@@ -207,14 +203,34 @@ def uploadDataToAirtable(content):                                # uploads the 
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
         print("Success\n")
         return "Successful"
+    else:
+        return {'content':content, 'failureText':x.text}
 
 
-def moveToDone(FilesToMove):
-    for y in FilesToMove:
+def appendToDebugLog(content, errormsg):
+    print(content)
+    print(errormsg)
+    try:
+        a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
+        orderNumber = ''
         try:
-            os.rename(y[0], pdfFolderLocation+"Done\\"+y[1])
+            if 'Order Number' in content['records'][0]['fields']:
+                orderNumber = content['records'][0]['fields']['Order Number']
+        except:
+            print("Can't find Order Number!")
+        a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+'\n'))
+        a.close()
+    except:
+        print("Can't append to debug log file.")
+
+
+def moveToFolder(filesToMove, folder):      # format: moveToFolder(["C:\\Path\\To\\File.pdf", "File.pdf"], "Errored")
+    for x in filesToMove:
+        try:
+            os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1])
         except FileExistsError:
-            print("File",y[1],"exists in Done folder.")
+            print("File", x[1], "exists in", folder, "folder.")
+            os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1][:-4]+" (1)"+x[1][-4:])
 
 
 def main(pool, files):
@@ -233,18 +249,28 @@ def main(pool, files):
         sendData = uploadDataToAirtable(content)
 
         if sendData == "Successful":
-            moveToDone(filesToMoveToDone)
+            moveToFolder(filesToMoveToDone, "Done")
+            return "Success"
         else:
-            print("send unsuccessful")
-
+            print("Send unsuccessful.")
+            if len(files) == 1:
+                # print(sendData)
+                appendToDebugLog(sendData['content'], sendData['failureText'])
+                startPDFProcessing(files[0], debug=True)
+                moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
+            else:
+                for x in files:
+                    main(pool, [x])
+            time.sleep(.5)
+                    
 
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     while True:
-        files = checkFolder()
-        if len(files) > 0:
-            main(p, files)
+        ListOfFiles = checkFolder()
+        if len(ListOfFiles) > 0:
+            main(p, ListOfFiles)
         else:
             print("No files found.")
         time.sleep(10)
