@@ -21,7 +21,16 @@ mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?M
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M)
 
+mackUpdateRegex = re.compile(r'Order Number.*?(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
+
+
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
+
+AirtableAPIHeaders = {
+    "Authorization":str("Bearer "+api_key),
+    "User-Agent":"Python Script",
+    "Content-Type":"application/json"
+}
 
     #       Dictionary containing headers pulled from file and their respective values in Airtable
     #
@@ -114,6 +123,8 @@ def startPDFProcessing(filename, **kwargs):
             filetype = "Volvo"
         elif "GSO:" in line2:
             filetype = "Mack"
+        elif "MACK TRUCKS, INC." in line1:
+            filetype = "Mack-Update"
         else:
             print("Unknown format.")
             try:
@@ -123,13 +134,16 @@ def startPDFProcessing(filename, **kwargs):
             except FileExistsError:
                 print("File exists.")
 
-        if filetype != "None":
-            LocationAndName = [pdfFolderLocation+str(filename), filename]
-
+        LocationAndName = [pdfFolderLocation+str(filename), filename]
+        if filetype == "Mack" or filetype == "Volvo":
             if 'debug' in kwargs:                   # create a regex debug file
                 writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-pdftotext).txt")
+            return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName, "Post"
 
-            return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName
+        elif filetype == "Mack-Update" or filetype == "Volvo-Update":
+
+            return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName, "Update"
+
 
 #    except:
 #        print("something went wrong.")
@@ -143,7 +157,7 @@ def writefile(string, filepath, extension):                 # write file for deb
 
 def createFieldEntries(file, filetype, filename, **kwargs):           #       Takes the file and processes it to take out the relevant information
     fieldEntries = {}                                       #   according to which vendor it came from, then returns the fields for
-    fields = {"fields":fieldEntries}                        #   further formatting, to be uploaded using the Airtable API
+    fields = [{"fields":fieldEntries}]                        #   further formatting, to be uploaded using the Airtable API
 
     if filetype == "Mack":
         mackRegexMatches = re.findall(mackRegex, file)
@@ -171,6 +185,20 @@ def createFieldEntries(file, filetype, filename, **kwargs):           #       Ta
         if re.search(r'\d{6}', filename) != None:
             fieldEntries["Order Number"] = re.search(r'\d{6}', filename).group(0)
 
+    elif filetype == "Mack-Update":
+        mackUpdateRegexMatches = re.findall(mackUpdateRegex, file)
+        if 'debug' in kwargs:
+            writefile(mackUpdateRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
+        fields = []
+        for x in mackUpdateRegexMatches:
+            id = getRecordID(x[0])
+            details = {"Full VIN":x[1]}
+            print(x)
+            if id != None:
+                fields.append({"id":id, "fields":details})
+            else:
+                appendToDebugLog("Cannot find order number in ORDERED UNITS list view", orderNumber=x[0])
+
     return fields
 
 
@@ -191,13 +219,15 @@ def runRegExMatching(content):
     return preppedData
 
 
-def uploadDataToAirtable(content):                                # uploads the data to Airtable
-    headers = {
-        "Authorization":str("Bearer "+api_key),
-        "User-Agent":"Python Script",
-        "Content-Type":"application/json"
-    }
-    x = requests.post(url,data=None,json=content,headers=headers)
+def postOrUpdate(content, sendType):
+    if sendType == "Post":
+        return requests.post(url,data=None,json=content,headers=AirtableAPIHeaders)
+    elif sendType == "Update":
+        return requests.patch(url,data=None,json=content,headers=AirtableAPIHeaders)
+
+
+def uploadDataToAirtable(content, sendType):                                # uploads the data to Airtable
+    x = postOrUpdate(content, sendType)
     print("\n\nPost response: ",x.json())
     print("\nPost HTTP code:", x.status_code)
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
@@ -206,19 +236,34 @@ def uploadDataToAirtable(content):                                # uploads the 
     else:
         return {'content':content, 'failureText':x.text}
 
+def retrieveRecordsFromAirtable():
+    x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&view=ORDERED+UNITS", data=None, headers=AirtableAPIHeaders)
+    return x.json()['records']
 
-def appendToDebugLog(content, errormsg):
-    print(content)
+# def updateAirtableRecordsCache():
+ListOfAirtableRecords = retrieveRecordsFromAirtable()
+    # print(ListOfAirtableRecords)
+    # writefile(ListOfAirtableRecords, mainFolder, 'listofrecords.txt')
+
+
+def getRecordID(orderNumber):
+    for x in ListOfAirtableRecords:
+        if "Order Number" in x['fields'] and x['fields']['Order Number'] == orderNumber:
+            return x['id']
+
+
+def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     try:
         a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
-        orderNumber = ''
-        try:
-            if 'Order Number' in content['records'][0]['fields']:
-                orderNumber = content['records'][0]['fields']['Order Number']
-        except:
-            print("Can't find Order Number!")
-        a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+'\n'))
+        extra = ''
+        if 'orderNumber' in kwargs:
+            orderNumber = kwargs['orderNumber']
+        else:
+            orderNumber = 'Unknown'
+        if 'extra' in kwargs:
+            extra = kwargs['extra']
+        a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+', Extra information: '+extra+'\n'))
         a.close()
     except:
         print("Can't append to debug log file.")
@@ -235,33 +280,60 @@ def moveToFolder(filesToMove, folder):      # format: moveToFolder(["C:\\Path\\T
 
 def main(pool, files):
         start_time = time.time()
-        records = []
+        recordsToPost = []
+        recordsToUpdate = []
         filesToMoveToDone = []
         threads = pool.imap_unordered(startPDFProcessing, files)
 
         for x in threads:
-            records.append(x[0])
+            if x[2] == "Post":
+                for y in x[0]:
+                    recordsToPost.append(y)
+            elif x[2] == "Update":
+                for y in x[0]:
+                    recordsToUpdate.append(y)
             filesToMoveToDone.append(x[1])
         
         print("Compute time: ",time.time()-start_time)
 
-        content = {"records":records}
-        sendData = uploadDataToAirtable(content)
-
-        if sendData == "Successful":
-            moveToFolder(filesToMoveToDone, "Done")
-            return "Success"
-        else:
-            print("Send unsuccessful.")
-            if len(files) == 1:
-                # print(sendData)
-                appendToDebugLog(sendData['content'], sendData['failureText'])
-                startPDFProcessing(files[0], debug=True)
-                moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
+        content = {"records":recordsToPost}
+        if len(recordsToPost) > 0:
+            sendData = uploadDataToAirtable(content, "Post")
+            if sendData == "Successful":
+                moveToFolder(filesToMoveToDone, "Done")
+                return "Success"
             else:
-                for x in files:
-                    main(pool, [x])
-            time.sleep(.5)
+                print("Send unsuccessful.")
+                if len(files) == 1:
+                    # print(sendData)
+                    appendToDebugLog("Send unsuccessful.", extra=sendData)
+                    startPDFProcessing(files[0], debug=True)
+                    moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
+                else:
+                    for x in files:
+                        main(pool, [x])
+                time.sleep(.5)
+
+
+        content2 = {"records":recordsToUpdate}
+        if len(recordsToUpdate) > 0:
+            sendData2 = uploadDataToAirtable(content2, "Update")
+            if sendData2 == "Successful":
+                moveToFolder(filesToMoveToDone, "Done")
+                return "Success"
+            else:
+                print("Send unsuccessful.")
+                if len(files) == 1:
+                    # print(sendData)
+                    appendToDebugLog("Send unsuccessful.", extra=sendData)
+                    startPDFProcessing(files[0], debug=True)
+                    moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
+                else:
+                    for x in files:
+                        main(pool, [x])
+                time.sleep(.5)
+
+
                     
 
 
