@@ -14,6 +14,8 @@ with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file con
 with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
     url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
+from conversionlists import headerConversionList, dealerCodes
+
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
 pdftotextExecutable = mainFolder+'pdftotext.exe'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 mackRegex = re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M)
@@ -21,8 +23,8 @@ mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?M
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M)
 
-mackUpdateRegex = re.compile(r'Order Number.*?(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
-
+mackUpdateRegex = re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
+volvoUpdateRegex = re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*? SERIAL NBR: (\S{6})', flags=re.S)
 
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
 
@@ -61,48 +63,6 @@ AirtableAPIHeaders = {
     #   to Airtable, with the first value in each set being the column header (ex. Engine Make) and the second value 
     #   being the entry under the column for that vehicle.
 
-headerConversionList = {       
-# Mack 
-    'Model':['Model'],
-    'GSO':['Order Number'],
-    # 'Chassis Number':'Chassis Number',
-    'Model Year':['Year'],
-    # 'CHASSIS (BASE MODEL)':'Chassis',
-    'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
-    'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
-    'TRANSMISSION':['Trans Model', '','Transmission',r'(MACK|ALLISON|EATON-FULLER)'],
-    'FRONT AXLE':['Front Axle',r'\.*?(\d{5})#'],
-    'REAR AXLES - TANDEM':['Rear Axle',r'\.*?(\d{5})#'],
-    'REAR AXLE RATIO':['Ratio',r'\.*?(\d.\d\d)'],
-    'REAR SUSPENSION - TANDEM':['Suspension',r''],
-    'WHEELBASE':['Wheelbase'],
-    'TIRES BRAND/TYPE - REAR':['RR Tire Size',r'^.*?(\d\dR.*?) '],
-    'WHEELS - FRONT':['FF Wheels',r'(ALUM)'],
-    'TIRES BRAND/TYPE - FRONT':['FF Tire Size',r'^.*?(\d\dR.*?) '],
-    'WHEELS - REAR':['RR Wheels',r'(ALUM)'],
-    'SLEEPER BOX':['Sleeper'],
-    'PAINT COLOR - AREA A':['Color'],
-    'PAINT COLOR - FIRST COLOR':['Color'],
-
-# Volvo
-    '008':['Model'],
-    'A19':['Year', r'(\d*?) '],
-    '2CX':['Sleeper',r'(\d.*?(?:-ROOF|ROOF)|DAY CAB)'],
-    '101':['Engine Make',r'(\w*?) ', 'Engine Model',r'^.*? (\w*?) ', 'HP',r'(\d{3}HP)'],
-    '270':['Trans Model','','Transmission',r'(VOLVO|ALLISON)'],
-    '330':['Rear Axle',r'.*? (\d.*?)LB'],
-    '350':['Suspension'],
-    '370':['Front Axle',r'.*? (\d.*?)LB'],
-    'TAX':['Ratio',r'(.*?) '],
-    '400':['Wheelbase',r'(\d*?")'],
-    '093':['FF Tire Size',r'^.*?(\d\dR.*?) '],
-    '084':['FF Wheels',r'(ALUM|STEEL)'],
-    '094':['RR Tire Size',r'^.*?(\d\dR.*?) '],
-    '085':['RR Wheels',r'(ALUM|STEEL)'],
-    '980':['Color']
-
-}
-
 
 def checkFolder():
     filesInFolder = []
@@ -125,10 +85,12 @@ def startPDFProcessing(filename, **kwargs):
             filetype = "Mack"
         elif "MACK TRUCKS, INC." in line1:
             filetype = "Mack-Update"
+        elif "PAGE  1" in line1:
+            filetype = "Volvo-Update"
         else:
             print("Unknown format.")
             try:
-                writefile(fileText, pdfFolderLocation+"Errored\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
+                writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
             except PermissionError:
                 print("Permission error.")
             except FileExistsError:
@@ -169,7 +131,7 @@ def createFieldEntries(file, filetype, filename, **kwargs):           #       Ta
                 fieldEntries[headerConversionList[mackUniqueInfoList[n]][0]] = x
         for x in mackRegexMatches:
             if x[0] in headerConversionList and x[1] not in ignoreList:
-                fieldEntries.update(runRegExMatching(x))
+                fieldEntries.update(runRegExMatching(x, headerConversionList))
         fieldEntries["Make"] = "Mack"
         fieldEntries["Status"] = "O"
 
@@ -179,7 +141,7 @@ def createFieldEntries(file, filetype, filename, **kwargs):           #       Ta
             writefile(volvoRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         for x in volvoRegexMatches:
             if x[0] in headerConversionList:
-                fieldEntries.update(runRegExMatching(x))
+                fieldEntries.update(runRegExMatching(x, headerConversionList))
         fieldEntries["Make"] = "Volvo"
         fieldEntries["Status"] = "O"
         if re.search(r'\d{6}', filename) != None:
@@ -191,19 +153,41 @@ def createFieldEntries(file, filetype, filename, **kwargs):           #       Ta
             writefile(mackUpdateRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         fields = []
         for x in mackUpdateRegexMatches:
-            id = getRecordID(x[0])
-            details = {"Full VIN":x[1]}
             print(x)
-            if id != None:
-                fields.append({"id":id, "fields":details})
+            if x[0] in dealerCodes:
+                loc = dealerCodes[x[0]]
+                id = getRecordID(x[1])
+                details = {"Full VIN":x[2], "Status":"A", "Location":loc, "Dealer Code":x[0]}
+                if id != None:
+                    fields.append({"id":id, "fields":details})
+                else:
+                    appendToDebugLog("Order Number not found in ORDERED UNITS list view", orderNumber=x[1], extra='Dealer code - '+x[0]+', VIN - '+x[2])
             else:
-                appendToDebugLog("Cannot find order number in ORDERED UNITS list view", orderNumber=x[0])
+                appendToDebugLog("Location not found", orderNumber=x[1], extra='Dealer code - '+x[0])
+    
+    elif filetype == "Volvo-Update":
+        volvoUpdateRegexMatches = re.findall(volvoUpdateRegex, file)
+        if 'debug' in kwargs:
+            writefile(volvoUpdateRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
+        fields = []
+        for x in volvoUpdateRegexMatches:
+            print(x)
+            if x[0] in dealerCodes:
+                loc = dealerCodes[x[0]]
+                id = getRecordID(x[2])
+                details = {"Full VIN":x[1], "Status":"A", "Location":loc, "Dealer Code":x[0]}
+                if id != None:
+                    fields.append({"id":id, "fields":details})
+                else:
+                    appendToDebugLog("Order Number not found in ORDERED UNITS list view", orderNumber=x[2], extra='Dealer code - '+x[0]+', VIN - '+x[1])
+            else:
+                appendToDebugLog("Location not found", orderNumber=x[2], extra='Dealer code - '+x[0])        
 
     return fields
 
 
-def runRegExMatching(content):
-    columnHeader = headerConversionList[content[0]]
+def runRegExMatching(content, regexlist):
+    columnHeader = regexlist[content[0]]
     preppedData = {}
     if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
         for x in range(0,len(columnHeader),2):
@@ -240,13 +224,17 @@ def retrieveRecordsFromAirtable():
     x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&view=ORDERED+UNITS", data=None, headers=AirtableAPIHeaders)
     return x.json()['records']
 
-# def updateAirtableRecordsCache():
-ListOfAirtableRecords = retrieveRecordsFromAirtable()
-    # print(ListOfAirtableRecords)
-    # writefile(ListOfAirtableRecords, mainFolder, 'listofrecords.txt')
+def updateAirtableRecordsCache():
+    ListOfAirtableRecords = str(retrieveRecordsFromAirtable()).replace("\'","\"") # pull records, convert to str, replace single quotes with double to make json format valid
+    writefile(ListOfAirtableRecords, mainFolder, 'listofrecords.json')
 
+def loadAirtableRecordsCache():
+    with open(mainFolder+'listofrecords.json', 'r') as cache:
+        x = str(cache.read())
+    return json.loads(x)
 
 def getRecordID(orderNumber):
+    ListOfAirtableRecords = loadAirtableRecordsCache()
     for x in ListOfAirtableRecords:
         if "Order Number" in x['fields'] and x['fields']['Order Number'] == orderNumber:
             return x['id']
@@ -269,13 +257,13 @@ def appendToDebugLog(errormsg, **kwargs):
         print("Can't append to debug log file.")
 
 
-def moveToFolder(filesToMove, folder):      # format: moveToFolder(["C:\\Path\\To\\File.pdf", "File.pdf"], "Errored")
+def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "Errored")
     for x in filesToMove:
         try:
             os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1])
         except FileExistsError:
             print("File", x[1], "exists in", folder, "folder.")
-            os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1][:-4]+" (1)"+x[1][-4:])
+            os.rename(x[0], pdfFolderLocation+folder+"\\Already Exists\\"+x[1][:-4]+" (1)"+x[1][-4:])
 
 
 def main(pool, files):
@@ -286,13 +274,16 @@ def main(pool, files):
         threads = pool.imap_unordered(startPDFProcessing, files)
 
         for x in threads:
-            if x[2] == "Post":
-                for y in x[0]:
-                    recordsToPost.append(y)
-            elif x[2] == "Update":
-                for y in x[0]:
-                    recordsToUpdate.append(y)
-            filesToMoveToDone.append(x[1])
+            if x != None:
+                if x[2] == "Post":
+                    for y in x[0]:
+                        recordsToPost.append(y)
+                elif x[2] == "Update":
+                    if len(x[0]) > 0:
+                        for y in x[0]:
+                            recordsToUpdate.append(y)
+                filesToMoveToDone.append(x[1])
+            
         
         print("Compute time: ",time.time()-start_time)
 
@@ -301,7 +292,6 @@ def main(pool, files):
             sendData = uploadDataToAirtable(content, "Post")
             if sendData == "Successful":
                 moveToFolder(filesToMoveToDone, "Done")
-                return "Success"
             else:
                 print("Send unsuccessful.")
                 if len(files) == 1:
@@ -320,18 +310,23 @@ def main(pool, files):
             sendData2 = uploadDataToAirtable(content2, "Update")
             if sendData2 == "Successful":
                 moveToFolder(filesToMoveToDone, "Done")
-                return "Success"
             else:
                 print("Send unsuccessful.")
                 if len(files) == 1:
                     # print(sendData)
-                    appendToDebugLog("Send unsuccessful.", extra=sendData)
+                    appendToDebugLog("Send unsuccessful.", extra=sendData2)
                     startPDFProcessing(files[0], debug=True)
+                    print(files[0])
                     moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
                 else:
                     for x in files:
                         main(pool, [x])
                 time.sleep(.5)
+
+        if len(recordsToPost) == 0 and len(recordsToUpdate) == 0:
+            for x in files:
+                moveToFolder([[pdfFolderLocation+x, x]], "Errored")
+
 
 
                     
@@ -339,6 +334,7 @@ def main(pool, files):
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
+    updateAirtableRecordsCache()
     while True:
         ListOfFiles = checkFolder()
         if len(ListOfFiles) > 0:
