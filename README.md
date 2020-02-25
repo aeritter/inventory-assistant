@@ -3,7 +3,7 @@
 This is the main script. Every x seconds, it checks a specific folder for .pdf files. If it finds any, it runs its processes on them to pull out the relevant information for creating a record in Airtable or updating one. It then moves those .pdf files to either the Done folder or the Errored folder, depending on whether the upload to Airtable was successful.
 
 ## conversionlists.py
-This gets pulled into the main script. It was separated out here to make it easier to read and edit. It contains two Python dictionaries, *headerConversionList* and *dealerCodes*.
+This gets pulled into the main script. It was separated out to make it easier to read and edit. It contains two Python dictionaries, *headerConversionList* and *dealerCodes*.
 
 ### headerConversionList
 The Header conversion list has two parts. The first half is the line that would be seen in the .pdf file. The second half is a list containing the header that it would be matched to in Airtable. That list can have either just the one header entry, or it can have sets of two -- the first of which is the header and the second is the RegEx string needed to pull out specific information from the matching line in the .pdf.
@@ -11,7 +11,7 @@ The Header conversion list has two parts. The first half is the line that would 
 #### Example:
 Given this line in a .pdf:
 
-`   ENGINE PACKAGE, COMBUSTION       MP7-425M MACK 425HP @ 1500-180`
+`&nbsp;&nbsp;&nbsp;ENGINE PACKAGE, COMBUSTION&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MP7-425M MACK 425HP @ 1500-180
 
 The script pulls it out into two parts, the first half and the second.
 A valid entry in the headerConversionList would look like this:
@@ -37,7 +37,12 @@ To figure out how to match the line using RegEx, go to regex101.com and enter th
 
 
 ### dealerCodes
-This section contains the dealer codes and their matching location. The location must be an exact match to a location already available as an option in Airtable's Location column.
+This section of conversionlists.py contains the dealer codes and their matching location. The location must be an exact match to a location already available as an option in Airtable's Location column.
+
+For example, this would match the dealer code F243 to the Amarillo location.
+
+`"F243":"Amarillo",`
+
 If the .pdf is an invoice, airtable-import.py will recognize it as such and attempt to match the dealer code found in the document with a location in the dealerCodes dictionary, then make the relevant additions to Airtable.
 
 
