@@ -1,8 +1,3 @@
-"""
-    Notes!
-    
-"""
-
 import re, os.path, subprocess, time
 import json, requests, multiprocessing
 
@@ -33,35 +28,6 @@ AirtableAPIHeaders = {
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
 }
-
-    #       Dictionary containing headers pulled from file and their respective values in Airtable
-    #
-    #   FORMAT:     'Name of variable identifier':['Name of column in Airtable', r'insert RegEx for variable here']
-    #
-    #       This is a Python dictionary, containing keys for the variable identifiers, and values which contain
-    #   a list, with the first entry in the list being the matching Airtable column and the second entry in the
-    #   list being the RegEx string needed to pull out the important information from the matched variable.
-    #       If no extra parsing needs to be done for the variable, there is no need to place a second item in a
-    #   list, but the value in the key:value pair always needs to be a list (contain brackets)
-    #       A list is used instead of a dictionary because it may be necessary to have two or more lines of RegEx
-    #   in order to parse all variations of a string for the same header (meaning multiple instances of the header,
-    #   which cannot coexist within a dictionary).
-
-    #   Valid entry examples:   'ENGINE':['Engine Make'],
-    #                           'TRUCK MODEL':['Model',r'\d'],
-    #                           'MODEL':['Model',],
-    #                           'ENGINE':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)'],
-
-    #   That last example converts this:    MP7-425M MACK 425HP @ 1500-180
-    #   To this:                            {'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}
-
-    #   The first example simply copies
-    #       the entire line:                MP7-425M MACK 425HP @ 1500-180
-    #   Which would look like this:         {'Engine Make': 'MP7-425M MACK 425HP @ 1500-180'}
-    
-    #       That converted example is then added to the rest of those types of entries which are finally uploaded  
-    #   to Airtable, with the first value in each set being the column header (ex. Engine Make) and the second value 
-    #   being the entry under the column for that vehicle.
 
 
 def checkFolder():
@@ -106,7 +72,6 @@ def startPDFProcessing(filename, **kwargs):
 
             return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName, "Update"
 
-
 #    except:
 #        print("something went wrong.")
 
@@ -117,9 +82,9 @@ def writefile(string, filepath, extension):                 # write file for deb
     a.close()
 
 
-def createFieldEntries(file, filetype, filename, **kwargs):           #       Takes the file and processes it to take out the relevant information
+def createFieldEntries(file, filetype, filename, **kwargs): #       Takes the file and processes it to take out the relevant information
     fieldEntries = {}                                       #   according to which vendor it came from, then returns the fields for
-    fields = [{"fields":fieldEntries}]                        #   further formatting, to be uploaded using the Airtable API
+    fields = [{"fields":fieldEntries}]                      #   further formatting, to be uploaded using the Airtable API
 
     if filetype == "Mack":
         mackRegexMatches = re.findall(mackRegex, file)
@@ -295,7 +260,6 @@ def main(pool, files):
             else:
                 print("Send unsuccessful.")
                 if len(files) == 1:
-                    # print(sendData)
                     appendToDebugLog("Send unsuccessful.", extra=sendData)
                     startPDFProcessing(files[0], debug=True)
                     moveToFolder([[pdfFolderLocation+files[0], files[0]]], "Errored")
@@ -303,7 +267,6 @@ def main(pool, files):
                     for x in files:
                         main(pool, [x])
                 time.sleep(.5)
-
 
         content2 = {"records":recordsToUpdate}
         if len(recordsToUpdate) > 0:
@@ -313,7 +276,6 @@ def main(pool, files):
             else:
                 print("Send unsuccessful.")
                 if len(files) == 1:
-                    # print(sendData)
                     appendToDebugLog("Send unsuccessful.", extra=sendData2)
                     startPDFProcessing(files[0], debug=True)
                     print(files[0])
@@ -327,18 +289,22 @@ def main(pool, files):
             for x in files:
                 moveToFolder([[pdfFolderLocation+x, x]], "Errored")
 
-
-
                     
 
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     updateAirtableRecordsCache()
+    x = 0
     while True:
+        x += 1
         ListOfFiles = checkFolder()
         if len(ListOfFiles) > 0:
             main(p, ListOfFiles)
         else:
             print("No files found.")
         time.sleep(10)
+        
+        if x > 30:      #every 5 minutes
+            updateAirtableRecordsCache()
+            x = 0
