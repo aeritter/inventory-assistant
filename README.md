@@ -11,7 +11,7 @@ The Header conversion list has two parts. The first half is the line that would 
 #### Example:
 Given this line in a .pdf:
 
-`&nbsp;&nbsp;&nbsp;ENGINE PACKAGE, COMBUSTION&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MP7-425M MACK 425HP @ 1500-180
+&nbsp;&nbsp;&nbsp;ENGINE PACKAGE, COMBUSTION&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MP7-425M MACK 425HP @ 1500-180
 
 The script pulls it out into two parts, the first half and the second.
 A valid entry in the headerConversionList would look like this:
