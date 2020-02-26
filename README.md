@@ -33,7 +33,7 @@ You would end up with this:
 `{'Engine':'MP7-425M MACK 425HP @ 1500-180'}`
 
 
-To figure out how to match the line using RegEx, go to regex101.com and enter the line you want matched. In this case, you would put `MP7-425M MACK 425HP @ 1500-180` in the bottom half (along with many other entries of the same line if you can) and you would try to match it as best you can using the line above. Use groups. Group 0 is never used in the script, so it begins pulling with group 1.
+To figure out how to match the line using RegEx, go to regex101.com and enter the line you want matched. In this case, you would put `MP7-425M MACK 425HP @ 1500-180` in the bottom half (along with many other entries of the same line if you can) and you would try to match it as best you can in the RegEx entry box above. As an example, take that MP7-425M line and use the Engine Make RegEx line with it (the stuff after the r and between the '' (r'in here')) and put them both in regex101.com. Use groups. Group 0 is never used in the script, but it does begin pulling with group 1.
 
 
 ### dealerCodes
