@@ -1,5 +1,9 @@
 import re, os.path, subprocess, time
 import json, requests, multiprocessing
+from PyPDF2 import PdfFileReader as PDFReader 
+from PyPDF2 import PdfFileWriter as PDFWriter
+
+debug = True
 
 mainFolder = 'C:\\airtabletest\\'
 
@@ -18,8 +22,11 @@ mackSpecificInfoRegex = re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?M
 mackUniqueInfoList = ['Model','GSO','Chassis Number','Model Year']
 volvoRegex = re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M)
 
-mackUpdateRegex = re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
-volvoUpdateRegex = re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*? SERIAL NBR: (\S{6})', flags=re.S)
+
+mackInvoiceRegex = re.compile(r'')
+volvoInvoiceRegex = re.compile(r'^(\S{3})\S{4} +(.*?)  ', flags=re.M)
+mackUpdateSpecificInfoRegex = re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
+volvoUpdateSpecificInfoRegex = re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*? SERIAL NBR: (\S{6})', flags=re.S)
 
 ignoreList = {'EQUIPMENT','ELECTRONICS'}
 
@@ -39,41 +46,128 @@ def checkFolder():
 
 
 def startPDFProcessing(filename, **kwargs):
-#    try:
-        fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
-        filetype = "None"
-
-        line1 = fileText.split('\n', 1)[0]                 # first line of .txt file
-        line2 = fileText.split('\n', 2)[1]                 # second line of .txt file
-        if "Welcome to Volvo" in line1:
-            filetype = "Volvo"
-        elif "GSO:" in line2:
-            filetype = "Mack"
-        elif "MACK TRUCKS, INC." in line1:
-            filetype = "Mack-Update"
-        elif "PAGE  1" in line1:
-            filetype = "Volvo-Update"
-        else:
-            print("Unknown format.")
-            try:
-                writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
-            except PermissionError:
-                print("Permission error.")
-            except FileExistsError:
-                print("File exists.")
-
+        fileText, filetype = determineFileType(filename, **kwargs)
         LocationAndName = [pdfFolderLocation+str(filename), filename]
+
         if filetype == "Mack" or filetype == "Volvo":
-            if 'debug' in kwargs:                   # create a regex debug file
-                writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-pdftotext).txt")
             return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName, "Post"
 
         elif filetype == "Mack-Update" or filetype == "Volvo-Update":
-
             return createFieldEntries(fileText, filetype, filename, **kwargs), LocationAndName, "Update"
+        
+        elif filetype == "Multiple":        # if it has multiple, it will split them and make them wait for the next processing cycle
+            print("Found multiple documents combined into one.")
 
-#    except:
-#        print("something went wrong.")
+
+def determineFileType(filename, **kwargs):
+    try:
+        fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+    except:
+        return "Error"
+    filetype = "None"
+
+    line1 = fileText.split('\n', 1)[0]                 # first line of .txt file
+    line2 = fileText.split('\n', 2)[1]                 # second line of .txt file
+    if "Welcome to Volvo" in line1:
+        filetype = "Volvo"
+    elif "GSO:" in line2:
+        filetype = "Mack"
+    elif "MACK TRUCKS, INC." in line1:
+        filetype = "Mack-Update"
+    elif "PAGE  1" in line1:
+        filetype = "Volvo-Update"
+    else:
+        print("Unknown format.")
+        filetype = "Unknown"
+        try:
+            writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" unknown format.txt")  # write to errored folder if not matched
+        except PermissionError:
+            print("Permission error.")
+        except FileExistsError:
+            print("File exists.")
+
+    if containsMultipleInvoices(filetype, fileText):
+        splitPDF(filename, fileText, filetype) 
+        filetype = "Multiple"
+
+    if 'debug' in kwargs or debug == True:                   # create a regex debug file
+        writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-pdftotext).txt")
+    return fileText, filetype
+
+def splitPDF(filename, fileText, filetype):
+    pageGroups = []
+    orderNumbers = []
+    if filetype == "Mack-Update":
+        y = 0
+        allmatches = re.findall(r'(?:(Invoice Date)|(Date Printed:)|(Order Number).*?(\d{8}))', fileText, flags=re.S)
+        for x, page in enumerate(allmatches):
+            if x+1 < len(allmatches):
+                if allmatches[x+1][2] != "Order Number":
+                    y += 1
+                elif x != 0:
+                    pageGroups.append(y)
+                    y = 0                       #for multithreading, remove this reset and pass the page numbers directly
+            else:                               # [7,7,7] becomes [7,14,21], and then you would pass [[0,7][8,14][15,21]]
+                y += 1
+                pageGroups.append(y)
+        print(pageGroups)
+        for x in allmatches:
+            if x[3] != '':
+                orderNumbers.append(x[3])
+
+    elif filetype == "Volvo-Update":
+        y = 1
+        allmatches = re.findall(r'PAGE {,2}(\d+)', fileText, flags=re.S)
+        print(allmatches)
+        for x, page in enumerate(allmatches):                  # iterate through page numbers
+            if x+1 < len(allmatches):
+                if int(page) == 1 and int(allmatches[x+1]) == int(page):
+                    y+=1
+                    print("first")
+                elif int(page) != 1:                                   # if current page number is higher than last seen page number, continue
+                    y += 1
+                    print('second')
+                elif x != 0:
+                    pageGroups.append(y)                                # otherwise, add to list and reset counter
+                    y = 1
+                    print('third')
+            else:
+                y += 1
+                print('all')
+                pageGroups.append(y)
+            # print(y)
+        print(pageGroups)
+        # pageGroups.append(y)                                        # add in last set of pages, since it doesn't drop back down to page 1 again
+        volvmatches = re.findall(r'PAGE {,2}2.*?SERIAL NBR: (\S{6})', fileText, flags=re.S)
+        for x in volvmatches:
+            orderNumbers.append(x)
+
+    pageCounter = 0
+    pageGroupNum = 0
+    for y, z in enumerate(pageGroups):                          # can probably be multithreaded
+        newFile = PDFWriter()
+        if z > 1:
+            for x in range(0, z):
+                newFile.addPage(PDFReader(pdfFolderLocation+filename).getPage(pageCounter))
+                pageCounter += 1
+            with open(pdfFolderLocation+'Invoice - '+orderNumbers[pageGroupNum]+'.pdf', 'wb') as newpdf:
+                newFile.write(newpdf)
+            pageGroupNum += 1
+        else:
+            pageCounter += 1
+    print(pageCounter)
+
+
+
+def containsMultipleInvoices(filetype, fileText):
+    if filetype == "Mack-Update":
+        if len(re.findall(r'', fileText)) > 1:
+            return True
+    elif filetype == "Volvo-Update":
+        if len(re.findall(r'PAGE {,2}3', fileText)) > 1: # if it contains more than one Page 3, it's probably multiple documents combined
+            return True
+    return False
+
 
 
 def writefile(string, filepath, extension):                 # write file for debugging
@@ -113,7 +207,7 @@ def createFieldEntries(file, filetype, filename, **kwargs): #       Takes the fi
             fieldEntries["Order Number"] = re.search(r'\d{6}', filename).group(0)
 
     elif filetype == "Mack-Update":
-        mackUpdateRegexMatches = re.findall(mackUpdateRegex, file)
+        mackUpdateRegexMatches = re.findall(mackUpdateSpecificInfoRegex, file)
         if 'debug' in kwargs:
             writefile(mackUpdateRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         fields = []
@@ -131,7 +225,7 @@ def createFieldEntries(file, filetype, filename, **kwargs): #       Takes the fi
                 appendToDebugLog("Location not found", orderNumber=x[1], extra='Dealer code - '+x[0])
     
     elif filetype == "Volvo-Update":
-        volvoUpdateRegexMatches = re.findall(volvoUpdateRegex, file)
+        volvoUpdateRegexMatches = re.findall(volvoUpdateSpecificInfoRegex, file)
         if 'debug' in kwargs:
             writefile(volvoUpdateRegexMatches, pdfFolderLocation+"Debug\\", filename[:-4]+" (debug-regexmatches).txt")
         fields = []
@@ -186,7 +280,12 @@ def uploadDataToAirtable(content, sendType):                                # up
         return {'content':content, 'failureText':x.text}
 
 def retrieveRecordsFromAirtable():
-    x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&view=ORDERED+UNITS", data=None, headers=AirtableAPIHeaders)
+    try:
+        x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&view=ORDERED+UNITS", data=None, headers=AirtableAPIHeaders)
+    except ConnectionError:
+        print("Could not connect to airtable.com")
+        time.sleep(30)
+        return retrieveRecordsFromAirtable()
     return x.json()['records']
 
 def updateAirtableRecordsCache():
@@ -223,7 +322,7 @@ def appendToDebugLog(errormsg, **kwargs):
 
 
 def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "Errored")
-    for x in filesToMove:
+    for x in filesToMove:                   # *NOTE* should probably switch to for x in kwargs, for multiple files
         try:
             os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1])
         except FileExistsError:
@@ -287,7 +386,10 @@ def main(pool, files):
 
         if len(recordsToPost) == 0 and len(recordsToUpdate) == 0:
             for x in files:
-                moveToFolder([[pdfFolderLocation+x, x]], "Errored")
+                if not "TRKINV" in x:
+                    moveToFolder([[pdfFolderLocation+x, x]], "Errored")
+                else:
+                    moveToFolder([[pdfFolderLocation+x, x]], "Unsplit TRKINV")
 
                     
 
