@@ -59,12 +59,7 @@ def startPDFProcessing(filename, **kwargs):
         print("Found multiple documents combined into one.")
     
     if filetype == "Unknown" or 'debug' in kwargs or debug == True:
-        try:
-            writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+", filetype "+filetype+" (debug pdftotext).txt")  # write to errored folder if not matched
-        except PermissionError:
-            print("Permission error.")
-        except FileExistsError:
-            print("File exists.")
+        writefile(fileText, pdfFolderLocation+"Debug\\", filename[:-4]+", filetype "+filetype+" (debug pdftotext).txt")  # write to errored folder if not matched
     
 
 def getPDFText(filename):
@@ -93,7 +88,6 @@ def determineFileType(fileText, filename, **kwargs):        #remove filename
     if containsMultipleInvoices(filetype, fileText) == True:
         splitPDF(filename, fileText, filetype) # needs to be removed, uncomment and make work in the above function
         filetype = "Multiple"
-
 
     return filetype
 
@@ -166,9 +160,14 @@ def containsMultipleInvoices(filetype, fileText):
 
 
 def writefile(string, filepath, extension):                 # write file for debugging
-    a = open(filepath+extension, 'w')
-    a.write(str(string))
-    a.close()
+    try:
+        a = open(filepath+extension, 'w')
+        a.write(str(string))
+        a.close()
+    except PermissionError:
+        print("Permission error.")
+    except FileExistsError:
+        print("File exists.")
 
 
 def createFieldEntries(file, filetype, filename, **kwargs): #       Takes the file and processes it to take out the relevant information
