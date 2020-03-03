@@ -28,14 +28,13 @@ volvoInvoiceRegex = re.compile(r'^(\S{3})\S{4} +(.*?)  ', flags=re.M)
 mackUpdateSpecificInfoRegex = re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S)
 volvoUpdateSpecificInfoRegex = re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*? SERIAL NBR: (\S{6})', flags=re.S)
 
-ignoreList = {'EQUIPMENT','ELECTRONICS'}
+
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+api_key),
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
 }
-
 
 def checkFolder():
     filesInFolder = []
@@ -415,7 +414,6 @@ def main(pool, files, **kwargs):
                     else:
                         for x in remainingFiles:
                             main(pool, [x], iterations=kwargs['iterations']+1)
-                time.sleep(.5)
                 del recordsToPost[:z]
 
         content2 = {"records":recordsToUpdate}
@@ -444,7 +442,6 @@ def main(pool, files, **kwargs):
                         for x in remainingFiles:
                             main(pool, [x], iterations=kwargs['iterations']+1)
                             
-                    time.sleep(.5)
                 del recordsToUpdate[:z]
 
             if recordUpdateStatus == "Unupdated" and recordPostStatus == "Unupdated":
@@ -460,12 +457,10 @@ def main(pool, files, **kwargs):
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
-    updateAirtableRecordsCache()
-    x = 0
     while True:
-        x += 1
         ListOfFiles = checkFolder()
         if len(ListOfFiles) > 0:
+            updateAirtableRecordsCache()
             main(p, ListOfFiles, iterations=0)
             #done, failed = main()
             #for x in done, writetofile(x, "Done")
@@ -473,7 +468,3 @@ if __name__ == "__main__":
         else:
             print("No files found.")
         time.sleep(10)
-        
-        if x > 4800:      #every 12 hours #switch to time.time() last updated
-            updateAirtableRecordsCache()
-            x = 0

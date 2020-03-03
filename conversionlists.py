@@ -4,6 +4,10 @@ headerConversionList = {
     'GSO':['Order Number'],
     # 'Chassis Number':'Chassis Number',
     'Model Year':['Year'],
+    'Dealer Code':['Dealer Code'],
+    'Full VIN':['Full VIN'],
+    'Order Number':['Order Number'],
+    'Location':['Location'],
     # 'CHASSIS (BASE MODEL)':'Chassis',
     'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
     'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
@@ -86,3 +90,5 @@ dealerCodes = {
     "5460D":"San Angelo",
 
 }
+
+ignoreList = {'EQUIPMENT','ELECTRONICS'}    # unintended RegEx matches that should be ignored
