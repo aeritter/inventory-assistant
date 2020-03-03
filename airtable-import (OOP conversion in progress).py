@@ -334,13 +334,16 @@ def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\
 
 
 def startProcessing(x):
+    start_time = time.time()
     pdf = document(x)
 
     if pdf.isMultipleInvoices == True:
         pdf.splitPDF()
+        print("Compute time: ", str(time.time()-start_time))
         return None
     else:
         upload = pdf.uploadData()
+        print("Compute time: ", str(time.time()-start_time))
         return upload
 
 def checkFolder():
