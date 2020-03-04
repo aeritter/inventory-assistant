@@ -25,21 +25,21 @@ AirtableAPIHeaders = {
 }
 
 mainRegex = {   
-    "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M), 
-    "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M), 
-    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M), 
+    "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M),
+    "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M),
+    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M),
     "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S', flags=re.M)
     }
 specificInfoRegex = {
-    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S), 
-    "Volvo":'', 
+    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S),
+    "Volvo":'',
     "MackInvoice":re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?UOM.*?(\S{4,6}).*?(\S{17}) ', flags=re.S), 
     "VolvoInvoice":re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*?MODEL: +(\S{4}) +.*? SERIAL NBR: (\S{6})', flags=re.S)
 }
 uniqueInfoList = {
     "Mack":['Model','Order Number','Year'],
-    "Volvo":[], 
-    "MackInvoice":['Dealer Code','Order Number', 'Model', 'Full VIN'], 
+    "Volvo":[],
+    "MackInvoice":['Dealer Code','Order Number', 'Model', 'Full VIN'],
     "VolvoInvoice":['Dealer Code', 'Full VIN', 'Year', 'Order Number']
 }
 make = {
@@ -58,8 +58,10 @@ status = {
 
 class document(object):
 
-    def __init__(self, fileName):
+    def __init__(self, fileParentFolder, fileName):
+        print(fileName)
         self.fileName = fileName
+        self.location = fileParentFolder
         self.orderNumber = None
         self.fileText = self.getPDFText(fileName)
         self.fileType = self.determineFileType()                                   # looping
@@ -80,7 +82,7 @@ class document(object):
 
     def getPDFText(self, filename):
         try:
-            fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+            fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', self.location+self.fileName,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
         except:
             return "Error"
         return fileText
@@ -117,7 +119,7 @@ class document(object):
 
         RegexMatches = re.findall(self.mainRegex, self.fileText)
         SpecificInfo = re.findall(self.specificInfoRegex, self.fileText)
-        if self.debug == True:
+        if str(self.location[-6:-1]) == "Debug":
             writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(SpecificInfo[0]):
@@ -153,7 +155,7 @@ class document(object):
             elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
-            moveToFolder([[pdfFolderLocation+self.fileName, newName]], '')
+            moveToFolder([[self.location+self.fileName, newName]], self.location)
             self.fileName = newName
             self.fields = fields
             return fields
@@ -203,7 +205,7 @@ class document(object):
 
         pageCounter = 0
         pageGroupNum = 0
-        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]],"Unsplit TRKINV")
+        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]],pdfFolderLocation+"Unsplit TRKINV")
         readOldFile = PDFReader(pdfFolderLocation+'Unsplit TRKINV\\'+self.fileName)
         for y, z in enumerate(pageGroups):                          # can probably be multithreaded
             newFile = PDFWriter()
@@ -312,14 +314,15 @@ def appendToDebugLog(errormsg, **kwargs):
         print("Can't append to debug log file.")
 
 
-def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "Errored")
-    for x in filesToMove:                   # more: moveToFolder([["Current file path", "New name of file"]], "Subfolder name")
+def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "C:\\Path\\To\\Extrafolder")
+    for x in filesToMove:                   # more: moveToFolder([["Current file path", "New name of file"]], "New file path")
         try:
-            os.rename(x[0], pdfFolderLocation+folder+"\\"+x[1])
+            print(str(x[0]), str(folder+"\\"+x[1]))
+            os.rename(x[0], folder+"\\"+x[1])
         except FileExistsError:
             print("File", x[1], "exists in", folder, "folder.")
             try:
-                os.rename(x[0], pdfFolderLocation+folder+"\\Already Exists\\"+x[1][:-4]+" (1)"+x[1][-4:])  
+                os.rename(x[0], folder+"\\Already Exists\\"+x[1][:-4]+" (1)"+x[1][-4:])  
             except:
                 os.remove(x[0])
                 pass
@@ -329,8 +332,10 @@ def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\
             pass
 
 def startProcessing(x):
+    pdfFileLocation = x[0]
+    pdfFile = x[1]
     start_time = time.time()
-    pdf = document(x)
+    pdf = document(pdfFileLocation, pdfFile)
 
     if pdf.containsMultipleInvoices == True:
         pdf.splitPDF()
@@ -340,32 +345,33 @@ def startProcessing(x):
         if pdf.orderNumber != None:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
             if upload == "Success":
-                moveToFolder([[pdfFolderLocation+pdf.fileName, pdf.fileName]], "Done") 
+                moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Done") 
             else:
                 appendToDebugLog("Could not upload ", orderNumber = pdf.orderNumber, extra="Error Message: "+upload['failureText'])
                 writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
-                moveToFolder([[pdfFolderLocation+pdf.fileName, pdf.fileName]], "Errored") 
+                moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Errored") 
             print("Compute time: ", str(time.time()-start_time))
             return True
 
-def checkFolder():
+def checkFolder(folderLocation):
     filesInFolder = []
-    for filename in os.listdir(pdfFolderLocation):
+    for filename in os.listdir(folderLocation):
         if str(filename)[-3:] == 'pdf':
-            filesInFolder.append(filename)
+            filesInFolder.append([folderLocation, filename])
     return filesInFolder
 
-def main(pool, files, **kwargs):
+def main(pool, files):
     pool.imap_unordered(startProcessing, files)
 
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     while True:
-        ListOfFiles = checkFolder()
+        ListOfFiles = checkFolder(pdfFolderLocation)
+        ListOfFiles.extend(checkFolder(pdfFolderLocation+"Debug\\"))
         if len(ListOfFiles) > 0:
             updateAirtableRecordsCache()
-            main(p, ListOfFiles, iterations=0)
+            main(p, ListOfFiles)
         else:
             print("No files found.")
         time.sleep(10)
