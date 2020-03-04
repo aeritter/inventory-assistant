@@ -1,14 +1,5 @@
 headerConversionList = {       
 # Mack 
-    'Model':['Model'],
-    'GSO':['Order Number'],
-    # 'Chassis Number':'Chassis Number',
-    'Model Year':['Year'],
-    'Dealer Code':['Dealer Code'],
-    'Full VIN':['Full VIN'],
-    'Order Number':['Order Number'],
-    'Location':['Location'],
-    # 'CHASSIS (BASE MODEL)':'Chassis',
     'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
     'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
     'TRANSMISSION':['Trans Model', '','Transmission',r'(MACK|ALLISON|EATON-FULLER)'],
@@ -34,13 +25,30 @@ headerConversionList = {
     '330':['Rear Axle',r'.*? (\d.*?)LB'],
     '350':['Suspension'],
     '370':['Front Axle',r'.*? (\d.*?)LB'],
-    'TAX':['Ratio',r'(.*?) '],
+    'TAX':['Ratio',r'(\d\.\d\d)'],
     '400':['Wheelbase',r'(\d*?")'],
     '093':['FF Tire Size',r'^.*?(\d\dR.*?) '],
-    '084':['FF Wheels',r'(ALUM|STEEL)'],
+    '084':['FF Wheels',r'(ALUM|STEEL|(?:POL AL))'],
     '094':['RR Tire Size',r'^.*?(\d\dR.*?) '],
-    '085':['RR Wheels',r'(ALUM|STEEL)'],
-    '980':['Color']
+    '085':['RR Wheels',r'(ALUM|STEEL|(?:POL AL))'],
+    '980':['Color'],
+
+# Invoices
+    '005':['Body'],
+    '100':['Engine Model',r'(\w*?) ', 'Engine Make',r'^.*? (\w*?) ', 'HP',r'(\d{3}HP)'],
+    '136':['Transmission', r'(ALLISON|MACK|EATON)', 'Trans Model','', 'Trans Model', r'^\S* (\w+\d+.*?) .*$'], # yes, trans model is in here twice for 136. Trans model will be matched to the entire line, then it will be changed if it matches on the second run.
+    '016':['Sleeper',r'(.*?)(?:\(|)'],
+    '240':['Front Axle',r'.*?(\S*?)#'],
+    '268':['Rear Axle',r'.*?(\S*?)#'],
+    '271':['Wheelbase'],
+    '186':['Suspension',r'(.*?\(|.*)'],
+    'FXX':['Front Axle', r'(\d\S*?) LB'],
+    'F1X':['Rear Axle', r'(\d\S*?) LB'],
+    '900':['FF Tire Size',r'.*?(\d\dR.*?) \S{2,}'],
+    '531':['FF Wheels', r'(ALUM|STEEL|POL AL)'],
+    '901':['RR Tire Size',r'.*?(\d\dR.*?) \S{2,}'],
+    '346':['RR Wheels',r'(ALUM|STEEL|(?:POL AL))'],
+    '944':['Color'],
 
 }
 
@@ -68,6 +76,7 @@ dealerCodes = {
     "F275":"Wichita Falls",
     "F592":"Pineville",
 
+    "4008D":"FedEx",
     "5068D":"Albuquerque",
     "5728D":"Amarillo",
     "5503D":"Shreveport",

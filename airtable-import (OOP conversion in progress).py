@@ -27,20 +27,20 @@ AirtableAPIHeaders = {
 mainRegex = {   
     "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M), 
     "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M), 
-    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?)  ', flags=re.M), 
-    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?)  ', flags=re.M)
+    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M), 
+    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S', flags=re.M)
     }
 specificInfoRegex = {
-    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Chassis:(.*?)\n.*?Model Year:(\w+)', flags=re.S), 
+    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S), 
     "Volvo":'', 
-    "MackInvoice":re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?VIN #.*?(\S{17}) ', flags=re.S), 
-    "VolvoInvoice":re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*? SERIAL NBR: (\S{6})', flags=re.S)
+    "MackInvoice":re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?UOM.*?(\S{4,6}).*?(\S{17}) ', flags=re.S), 
+    "VolvoInvoice":re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*?MODEL: +(\S{4}) +.*? SERIAL NBR: (\S{6})', flags=re.S)
 }
 uniqueInfoList = {
-    "Mack":['Model','GSO','Chassis Number','Model Year'],
+    "Mack":['Model','Order Number','Year'],
     "Volvo":[], 
-    "MackInvoice":['Dealer Code','Order Number','Full VIN'], 
-    "VolvoInvoice":['Dealer Code','Full VIN','Order Number']
+    "MackInvoice":['Dealer Code','Order Number', 'Model', 'Full VIN'], 
+    "VolvoInvoice":['Dealer Code', 'Full VIN', 'Year', 'Order Number']
 }
 make = {
     "Mack":"Mack",
@@ -64,9 +64,9 @@ class document(object):
         self.fileText = self.getPDFText(fileName)
         self.fileType = self.determineFileType()                                   # looping
         self.sendType = ''
-        self.isMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)    # here
+        self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)    # here
         self.debug = True
-        if self.isMultipleInvoices == False:
+        if self.containsMultipleInvoices == False:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
 
@@ -79,7 +79,7 @@ class document(object):
 
     def getPDFText(self, filename):
         try:
-            fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', '-marginb','40', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+            fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', pdfFolderLocation+str(filename),'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
         except:
             return "Error"
         return fileText
@@ -99,7 +99,7 @@ class document(object):
             print("Unknown format.")
             self.fileType = "Unknown"
 
-        # if self.isMultipleInvoices == True:
+        # if self.containsMultipleInvoices == True:
         #     self.fileType = "Multiple"
 
         return self.fileType
@@ -118,39 +118,47 @@ class document(object):
         SpecificInfo = re.findall(self.specificInfoRegex, self.fileText)
         if self.debug == True:
             writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
+            writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(SpecificInfo[0]):
-            if self.uniqueInfoList[n] in headerConversionList:
-                fieldEntries[headerConversionList[self.uniqueInfoList[n]][0]] = x
+            fieldEntries[self.uniqueInfoList[n]] = x
         for x in RegexMatches:
             if x[0] in headerConversionList and x[1] not in ignoreList:
                 fieldEntries.update(runRegExMatching(x, headerConversionList))
-        if 'Order Number' in fieldEntries:
-            id = getRecordID(fieldEntries['Order Number'])
-            if id != None:
-                fields[0].update({"id":id})
-                self.sendType = "Update"
-            else:
-                self.sendType = "Post"
-        else:
-            appendToDebugLog("Could not find order number", extra=str("file - "+self.fileName))
+
+        if 'Order Number' not in fieldEntries:
+            try:
+                fieldEntries['Order Number'] = re.search(r'(\d{6,8})', self.fileName).group(1)
+            except:
+                pass
+        
         if 'Dealer Code' in fieldEntries:
             if fieldEntries['Dealer Code'] in dealerCodes:
                 loc = dealerCodes[fieldEntries['Dealer Code']]
                 fieldEntries.update({"Location":loc})
         fieldEntries["Make"] = self.make
         fieldEntries["Status"] = self.status
+        if 'Order Number' in fieldEntries:
+            self.orderNumber = fieldEntries['Order Number']
+            id = getRecordID(fieldEntries['Order Number'])
+            if id != None:
+                fields[0].update({"id":id})
+                self.sendType = "Update"
+            else:
+                self.sendType = "Post"
 
-        OrderOrInvoice = ''
-        if self.status == "O":
-            OrderOrInvoice = "Order - "
-        elif self.status == "A":
-            OrderOrInvoice = "Invoice - "
-        newName = OrderOrInvoice+fieldEntries['Order Number']+'.pdf'
-        self.fileName = newName
-        self.orderNumber = fieldEntries['Order Number']
-        moveToFolder([[pdfFolderLocation+self.fileName, newName]], '')
+            OrderOrInvoice = ''
+            if self.status == "O":
+                OrderOrInvoice = "Order - "
+            elif self.status == "A":
+                OrderOrInvoice = "Invoice - "
+            newName = OrderOrInvoice+self.orderNumber+'.pdf'
+            moveToFolder([[pdfFolderLocation+self.fileName, newName]], '')
+            self.fileName = newName
+            return fields
 
-        return fields
+        else:
+            appendToDebugLog("Could not find order number", extra=str("file - "+self.fileName))
+            return "Order Number not found"
 
 
     def splitPDF(self):
@@ -210,17 +218,22 @@ class document(object):
 
     def moveToDone(self):
         moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]], "Done") 
+    
+    def moveToErrored(self):
+        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]], "Errored")
 
     def uploadData(self):
-        x = uploadDataToAirtable(self.records, self.sendType)
-        if x == "Success":
-            self.moveToDone()
-        else:
-            self.createDebugFiles(x)
-        return x
+        if self.orderNumber != None:
+            x = uploadDataToAirtable(self.records, self.sendType)
+            if x == "Success":
+                self.moveToDone()
+            else:
+                self.createDebugFiles(x['failureText'])
+                self.moveToErrored()
+            return x
 
     def createDebugFiles(self, content):
-        appendToDebugLog("Could not upload.", extra=content)
+        appendToDebugLog("Could not upload.", orderNumber=self.orderNumber, extra=content)
         
 
 def runRegExMatching(content, regexlist):
@@ -337,7 +350,7 @@ def startProcessing(x):
     start_time = time.time()
     pdf = document(x)
 
-    if pdf.isMultipleInvoices == True:
+    if pdf.containsMultipleInvoices == True:
         pdf.splitPDF()
         print("Compute time: ", str(time.time()-start_time))
         return None
