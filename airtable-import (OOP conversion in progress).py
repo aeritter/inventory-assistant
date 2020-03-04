@@ -60,17 +60,18 @@ class document(object):
 
     def __init__(self, fileName):
         self.fileName = fileName
-        self.orderNumber = ''
+        self.orderNumber = None
         self.fileText = self.getPDFText(fileName)
         self.fileType = self.determineFileType()                                   # looping
         self.sendType = ''
         self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)    # here
-        self.debug = True
+        self.debug = False
         if self.containsMultipleInvoices == False:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
 
     def loadVariables(self):
+        self.fields = False         # becomes a dictionary
         self.mainRegex = mainRegex[self.fileType]
         self.specificInfoRegex = specificInfoRegex[self.fileType]
         self.uniqueInfoList = uniqueInfoList[self.fileType]
@@ -147,18 +148,18 @@ class document(object):
                 self.sendType = "Post"
 
             OrderOrInvoice = ''
-            if self.status == "O":
+            if self.status == "O":                  # Order means the truck has been ordered but is not yet available (O)
                 OrderOrInvoice = "Order - "
-            elif self.status == "A":
+            elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
             moveToFolder([[pdfFolderLocation+self.fileName, newName]], '')
             self.fileName = newName
+            self.fields = fields
             return fields
 
         else:
             appendToDebugLog("Could not find order number", extra=str("file - "+self.fileName))
-            return "Order Number not found"
 
 
     def splitPDF(self):
@@ -215,25 +216,6 @@ class document(object):
                 pageGroupNum += 1
             else:
                 pageCounter += 1
-
-    def moveToDone(self):
-        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]], "Done") 
-    
-    def moveToErrored(self):
-        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]], "Errored")
-
-    def uploadData(self):
-        if self.orderNumber != None:
-            x = uploadDataToAirtable(self.records, self.sendType)
-            if x == "Success":
-                self.moveToDone()
-            else:
-                self.createDebugFiles(x['failureText'])
-                self.moveToErrored()
-            return x
-
-    def createDebugFiles(self, content):
-        appendToDebugLog("Could not upload.", orderNumber=self.orderNumber, extra=content)
         
 
 def runRegExMatching(content, regexlist):
@@ -262,6 +244,7 @@ def writefile(string, filepath, extension):                 # write file for deb
     except FileExistsError:
         print("File exists.")
 
+
 def postOrUpdate(content, sendType):
     if sendType == "Post":
         return requests.post(url,data=None,json=content,headers=AirtableAPIHeaders)
@@ -277,7 +260,7 @@ def uploadDataToAirtable(content, sendType):                                # up
         print("Success! Sent via "+sendType+"\n")
         return "Success"
     else:
-        return {'content':content, 'failureText':x.text}
+        return {'content':str(content), 'failureText':str(json.loads(x.text)['error']['message'])}
 
 def retrieveRecordsFromAirtable(offset):
     while True:
@@ -345,7 +328,6 @@ def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\
             print(x[1]+" not found.")
             pass
 
-
 def startProcessing(x):
     start_time = time.time()
     pdf = document(x)
@@ -355,9 +337,16 @@ def startProcessing(x):
         print("Compute time: ", str(time.time()-start_time))
         return None
     else:
-        upload = pdf.uploadData()
-        print("Compute time: ", str(time.time()-start_time))
-        return upload
+        if pdf.orderNumber != None:
+            upload = uploadDataToAirtable(pdf.records, pdf.sendType)
+            if upload == "Success":
+                moveToFolder([[pdfFolderLocation+pdf.fileName, pdf.fileName]], "Done") 
+            else:
+                appendToDebugLog("Could not upload ", orderNumber = pdf.orderNumber, extra="Error Message: "+upload['failureText'])
+                writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
+                moveToFolder([[pdfFolderLocation+pdf.fileName, pdf.fileName]], "Errored") 
+            print("Compute time: ", str(time.time()-start_time))
+            return True
 
 def checkFolder():
     filesInFolder = []
@@ -367,8 +356,7 @@ def checkFolder():
     return filesInFolder
 
 def main(pool, files, **kwargs):
-    threads = pool.imap_unordered(startProcessing, files)
-                    
+    pool.imap_unordered(startProcessing, files)
 
 
 if __name__ == "__main__":
