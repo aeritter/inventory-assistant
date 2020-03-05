@@ -2,6 +2,7 @@ import re, os.path, subprocess, time, importlib
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
+from pathlib import Path
 
 debug = True
 
@@ -265,7 +266,7 @@ def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     try:
         a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
-        a.write(str(time.ctime())+','.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+        a.write("\n"+str(time.ctime())+" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
         a.close()
     except:
         print("Can't append to debug log file.")
@@ -317,29 +318,78 @@ def checkFolder(folderLocation):
             filesInFolder.append([folderLocation, filename])
     return filesInFolder
 
-def main(pool, files):
+def importAndCheckConversionlists():
     try:
         importlib.reload(conversionlists)
         from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
-    except Exception as exc:        # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-        for x in files:
-            moveToFolder(x[0], x[1], pdfFolderLocation+"Errored")
-        if type(exc) == SyntaxError:
-            appendToDebugLog("Error in conversionlists.py! Did you forget a comma on line "+str(int(exc.args[1][1])-1)+"?")
-        else:
-            appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(exc), Details=exc.args)
+    except Exception as exc:        
+        return exc            # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
     else:                           # if no errors in reloading conversionlists.py, update cache and run!
-        updateAirtableRecordsCache()
-        pool.imap_unordered(startProcessing, files)
+        return True
+
+def isdir(x):
+    return Path(pdfFolderLocation+x).is_dir()
+
+def makedir(x):
+    return Path(pdfFolderLocation+x).mkdir()
+
+def initialization():
+    try:                                                    # create folders if they don't exist
+        dirlist = ['Debug','Done','Errored','Suspended','Unsplit TRKINV']   
+        if isdir(''):
+            for x in dirlist:
+                if isdir(x) != True:
+                    makedir(x)
+    except Exception as exc:
+        print(exc.args)
+        return False
+
+    try:                                                    # check if conversionlists.py has syntax errors
+        isConversionlistsOkay = importAndCheckConversionlists()
+        suspendedFolderContents = checkFolder(pdfFolderLocation+"Suspended\\")
+        if isConversionlistsOkay == True:
+            if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
+                print("Suspended files found, checking config")
+                for x in suspendedFolderContents:
+                    moveToFolder(x[0], x[1], pdfFolderLocation)
+            return True
+        else:                                               # but if it does, move PDFs found in main folder to Suspended folder and write log
+            mainFolderContents = checkFolder(pdfFolderLocation)
+            if len(mainFolderContents) > 0:
+                if type(isConversionlistsOkay) == SyntaxError:
+                    appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(isConversionlistsOkay.args[1][1])-1)+" or "+str(int(isConversionlistsOkay.args[1][1]))+"?")
+                else:
+                    appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(isConversionlistsOkay), Details=isConversionlistsOkay.args)
+                for x in checkFolder(pdfFolderLocation):
+                    moveToFolder(x[0], x[1], pdfFolderLocation+"Suspended")
+            return False
+    except Exception as exc:
+        appendToDebugLog("Initialization failed", exceptiontype=type(exc), exceptionargs=exc.args)
+        return False
+            
+
+
+def main(pool):
+    try:
+        if initialization() == True:
+            ListOfFiles = checkFolder(pdfFolderLocation)
+            ListOfFiles.extend(checkFolder(pdfFolderLocation+"Debug\\"))
+            if len(ListOfFiles) > 0:
+                updateAirtableRecordsCache()
+                pool.imap_unordered(startProcessing, ListOfFiles)
+
+            else:
+                print("No files found.")
+        else:
+            print("Initialization failed")
+        return
+
+    except Exception as exc:
+        print(exc.args)
 
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     while True:
-        ListOfFiles = checkFolder(pdfFolderLocation)
-        ListOfFiles.extend(checkFolder(pdfFolderLocation+"Debug\\"))
-        if len(ListOfFiles) > 0:
-            main(p, ListOfFiles)
-        else:
-            print("No files found.")
+        main(p)
         time.sleep(10)
