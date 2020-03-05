@@ -1,4 +1,4 @@
-import re, os.path, subprocess, time
+import re, os.path, subprocess, time, importlib
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -16,6 +16,7 @@ with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt fil
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
 pdftotextExecutable = mainFolder+'pdftotext.exe'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 
+import conversionlists
 from conversionlists import headerConversionList, dealerCodes, ignoreList
 
 AirtableAPIHeaders = {
@@ -59,7 +60,6 @@ status = {
 class document(object):
 
     def __init__(self, fileParentFolder, fileName):
-        print(fileName)
         self.fileName = fileName
         self.location = fileParentFolder
         self.orderNumber = None
@@ -161,7 +161,7 @@ class document(object):
             return fields
 
         else:
-            appendToDebugLog("Could not find order number", extra=str("file - "+self.fileName))
+            appendToDebugLog("Could not find order number", file=self.fileName)
 
 
     def splitPDF(self):
@@ -301,14 +301,16 @@ def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     try:
         a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
-        extra = ''
-        if 'orderNumber' in kwargs:
-            orderNumber = kwargs['orderNumber']
-        else:
-            orderNumber = 'Unknown'
-        if 'extra' in kwargs:
-            extra = kwargs['extra']
-        a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+', Extra information: '+str(extra)+'\n'))
+        # extra = ''
+        # if 'orderNumber' in kwargs:
+        #     orderNumber = kwargs['orderNumber']
+        # else:
+        #     orderNumber = 'Unknown'
+        # if 'extra' in kwargs:
+        #     extra = kwargs['extra']
+        print(','.join('{0}:{1!r}'.format(x, y) for x, y in kwargs.items()))
+        a.write(str(time.ctime())+','.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+        # a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+', Extra information: '+str(extra)+'\n'))
         a.close()
     except:
         print("Can't append to debug log file.")
@@ -317,7 +319,6 @@ def appendToDebugLog(errormsg, **kwargs):
 def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "C:\\Path\\To\\Extrafolder")
     for x in filesToMove:                   # more: moveToFolder([["Current file path", "New name of file"]], "New file path")
         try:
-            print(str(x[0]), str(folder+"\\"+x[1]))
             os.rename(x[0], folder+"\\"+x[1])
         except FileExistsError:
             print("File", x[1], "exists in", folder, "folder.")
@@ -347,7 +348,7 @@ def startProcessing(x):
             if upload == "Success":
                 moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Done") 
             else:
-                appendToDebugLog("Could not upload ", orderNumber = pdf.orderNumber, extra="Error Message: "+upload['failureText'])
+                appendToDebugLog("Could not upload ", OrderNumber = pdf.orderNumber, ErrorMessage=upload['failureText'])
                 writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
                 moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Errored") 
             print("Compute time: ", str(time.time()-start_time))
@@ -361,7 +362,16 @@ def checkFolder(folderLocation):
     return filesInFolder
 
 def main(pool, files):
-    pool.imap_unordered(startProcessing, files)
+    try:
+        importlib.reload(conversionlists)
+        from conversionlists import headerConversionList, dealerCodes, ignoreList
+    except SyntaxError as exc:
+        appendToDebugLog("Error in conversionlists.py! Did you forget a comma on line "+str(int(exc.args[1][1])-1)+"?")
+    except Exception as exc:
+        appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(exc), Details=exc.args)
+    else:                               # if no errors in reloading conversionlists.py, update cache and run!
+        updateAirtableRecordsCache()
+        pool.imap_unordered(startProcessing, files)
 
 
 if __name__ == "__main__":
@@ -370,7 +380,6 @@ if __name__ == "__main__":
         ListOfFiles = checkFolder(pdfFolderLocation)
         ListOfFiles.extend(checkFolder(pdfFolderLocation+"Debug\\"))
         if len(ListOfFiles) > 0:
-            updateAirtableRecordsCache()
             main(p, ListOfFiles)
         else:
             print("No files found.")
