@@ -17,43 +17,12 @@ pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
 pdftotextExecutable = mainFolder+'pdftotext.exe'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 
 import conversionlists
-from conversionlists import headerConversionList, dealerCodes, ignoreList
+from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+api_key),
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
-}
-
-mainRegex = {   
-    "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M),
-    "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M),
-    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M),
-    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S', flags=re.M)
-    }
-specificInfoRegex = {
-    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S),
-    "Volvo":'',
-    "MackInvoice":re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?UOM.*?(\S{4,6}).*?(\S{17}) ', flags=re.S), 
-    "VolvoInvoice":re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*?MODEL: +(\S{4}) +.*? SERIAL NBR: (\S{6})', flags=re.S)
-}
-uniqueInfoList = {
-    "Mack":['Model','Order Number','Year'],
-    "Volvo":[],
-    "MackInvoice":['Dealer Code','Order Number', 'Model', 'Full VIN'],
-    "VolvoInvoice":['Dealer Code', 'Full VIN', 'Year', 'Order Number']
-}
-make = {
-    "Mack":"Mack",
-    "Volvo":"Volvo",
-    "MackInvoice":"Mack",
-    "VolvoInvoice":"Volvo"
-}
-status = {
-    "Mack":"O",
-    "Volvo":"O",
-    "MackInvoice":"A",
-    "VolvoInvoice":"A"
 }
 
 
@@ -74,8 +43,8 @@ class document(object):
 
     def loadVariables(self):
         self.mainRegex = mainRegex[self.fileType]
-        self.specificInfoRegex = specificInfoRegex[self.fileType]
-        self.uniqueInfoList = uniqueInfoList[self.fileType]
+        self.distinctInfoRegex = distinctInfoRegex[self.fileType]
+        self.distinctInfoList = distinctInfoList[self.fileType]
         self.make = make[self.fileType]
         self.status = status[self.fileType]
 
@@ -114,12 +83,12 @@ class document(object):
         fields = [{"fields":fieldEntries}]                      #   further formatting, to be uploaded using the Airtable API
 
         RegexMatches = re.findall(self.mainRegex, self.fileText)
-        SpecificInfo = re.findall(self.specificInfoRegex, self.fileText)
+        distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
             writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
-        for n, x in enumerate(SpecificInfo[0]):
-            fieldEntries[self.uniqueInfoList[n]] = x
+        for n, x in enumerate(distinctInfo[0]):
+            fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
             if x[0] in headerConversionList and x[1] not in ignoreList:
                 fieldEntries.update(runRegExMatching(x, headerConversionList))
@@ -351,7 +320,7 @@ def checkFolder(folderLocation):
 def main(pool, files):
     try:
         importlib.reload(conversionlists)
-        from conversionlists import headerConversionList, dealerCodes, ignoreList
+        from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
     except Exception as exc:        # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
         for x in files:
             moveToFolder(x[0], x[1], pdfFolderLocation+"Errored")

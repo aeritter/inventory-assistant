@@ -1,3 +1,36 @@
+import re
+
+mainRegex = {   # regex to pull line items out from the pdftotext output
+    "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M),
+    "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M),
+    "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M),
+    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S', flags=re.M)
+    }
+distinctInfoRegex = {   # regex to pull field entries directly from the pdftotext output
+    "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S),
+    "Volvo":'',
+    "MackInvoice":re.compile(r'Order Number.*?(\S{4,5}) +(\d{8}).*?UOM.*?(\S{4,6}).*?(\S{17}) ', flags=re.S), 
+    "VolvoInvoice":re.compile(r'DEALER\..*?(\S{5}) +.*?NBR:.*?(\S{17}).*?MODEL: +(\S{4}) +.*? SERIAL NBR: (\S{6})', flags=re.S)
+}
+distinctInfoList = {    # column/field header to match with the associated entry in distinctInfoRegex, in the order that the regex groups are pulled
+    "Mack":['Model','Order Number','Year'],
+    "Volvo":[],
+    "MackInvoice":['Dealer Code','Order Number', 'Model', 'Full VIN'],
+    "VolvoInvoice":['Dealer Code', 'Full VIN', 'Year', 'Order Number']
+}
+make = {                # match filetype with field entry for the Make column
+    "Mack":"Mack",
+    "Volvo":"Volvo",
+    "MackInvoice":"Mack",
+    "VolvoInvoice":"Volvo"
+}
+status = {              # match filetype with field entry for the Status column
+    "Mack":"O",
+    "Volvo":"O",
+    "MackInvoice":"A",
+    "VolvoInvoice":"A"
+}
+
 headerConversionList = {       
 # Mack 
     'ENGINE PACKAGE':['Engine Make',r'^.*? (\w+)', 'Engine Model',r'^(\S*)', 'HP',r'(\d{3}HP)'],
