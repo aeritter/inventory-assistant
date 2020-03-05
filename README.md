@@ -8,30 +8,61 @@ This gets pulled into the main script. It was separated out to make it easier to
 ### headerConversionList
 The Header conversion list has two parts. The first half is the line that would be seen in the .pdf file. The second half is a list containing the header that it would be matched to in Airtable. That list can have either just the one header entry, or it can have sets of two -- the first of which is the header and the second is the RegEx string needed to pull out specific information from the matching line in the .pdf.
 
+#### Airtable
+Airtable receives data in this format:
+```
+{
+  "records": [
+    {
+      "id": "recIDplacedhere",
+      "fields": {
+        "Stock": "41991",
+        "Year": "2020",
+        "Make": "Mack",
+        "Model": "LR613"
+        }
+    }]
+} 
+```
+
+"records" contains a list of records to create/update. A record is an individual row.
+
+"id" refers to the row ID. This is only present when updating and is obtained from Airtable's API when searching for records.
+
+"fields" contains a list of column names and the entry that goes in that column for that record.
+
+
 #### Example:
 Given this line in a .pdf:
 
-&nbsp;&nbsp;&nbsp;ENGINE PACKAGE, COMBUSTION&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MP7-425M MACK 425HP @ 1500-180
+```
+   ENGINE PACKAGE, COMBUSTION       MP7-425M MACK 425HP @ 1500-180
+```
 
 The script pulls it out into two parts, the first half and the second.
 A valid entry in the headerConversionList would look like this:
-
-`'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)'],`
+```
+'ENGINE PACKAGE, COMBUSTION':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)'],
+```
 
 This is interpreted by the script as the following:
 If the first half of the line in the .pdf (ENGINE PACKAGE, COMBUSTION) matches the first half of an entry in headerConversionList, it will begin processing using the second half of the matched entry in headerConversionList.
 
 In the above example, this would be the output, with the first entry in every pair being the Airtable header and the second entry being the cell contents:
-`{'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}`
+```
+{'Engine Make': 'MACK', 'Engine Model': 'MP7-425M'}
+```
 
 Taking the same line in the .pdf, if you were to use this headerConversionList entry:
 
-`ENGINE PACKAGE, COMBUSTION':['Engine'],`
+```
+ENGINE PACKAGE, COMBUSTION':['Engine'],
+```
 
 You would end up with this:
-
-`{'Engine':'MP7-425M MACK 425HP @ 1500-180'}`
-
+```
+{'Engine':'MP7-425M MACK 425HP @ 1500-180'}
+```
 
 To figure out how to match the line using RegEx, go to regex101.com and enter the line you want matched. In this case, you would put `MP7-425M MACK 425HP @ 1500-180` in the bottom half (along with many other entries of the same line if you can) and you would try to match it as best you can in the RegEx entry box above. As an example, take that MP7-425M line and use the Engine Make RegEx line with it (the stuff after the r and between the '' (r'in here')) and put them both in regex101.com. Use groups. Group 0 is never used in the script, but it does begin pulling with group 1.
 
