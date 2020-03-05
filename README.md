@@ -37,7 +37,6 @@ Given this line in a .pdf:
 
 ```
    ENGINE PACKAGE, COMBUSTION       MP7-425M MACK 425HP @ 1500-180
-   
 ```
 
 The script pulls it out into two parts, the first half and the second.
