@@ -155,7 +155,7 @@ class document(object):
             elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
-            moveToFolder([[self.location+self.fileName, newName]], self.location)
+            moveToFolder(self.location,self.fileName, self.location, newName)
             self.fileName = newName
             self.fields = fields
             return fields
@@ -205,7 +205,7 @@ class document(object):
 
         pageCounter = 0
         pageGroupNum = 0
-        moveToFolder([[pdfFolderLocation+self.fileName, self.fileName]],pdfFolderLocation+"Unsplit TRKINV")
+        moveToFolder(pdfFolderLocation, self.fileName, pdfFolderLocation+"Unsplit TRKINV")
         readOldFile = PDFReader(pdfFolderLocation+'Unsplit TRKINV\\'+self.fileName)
         for y, z in enumerate(pageGroups):                          # can probably be multithreaded
             newFile = PDFWriter()
@@ -316,21 +316,22 @@ def appendToDebugLog(errormsg, **kwargs):
         print("Can't append to debug log file.")
 
 
-def moveToFolder(filesToMove, folder):      # format: moveToFolder([["C:\\Path\\To\\File.pdf", "File.pdf"]["C:\\etc\\etc.etc", "etc.etc"]], "C:\\Path\\To\\Extrafolder")
-    for x in filesToMove:                   # more: moveToFolder([["Current file path", "New name of file"]], "New file path")
+def moveToFolder(oldFolder, oldName, newFolder, newName=None):
+    if newName == None:
+        newName = oldName
+    try:
+        os.rename(oldFolder+oldName, newFolder+"\\"+newName)
+    except FileExistsError:
+        print("File", newName, "exists in", newFolder, "folder.")
         try:
-            os.rename(x[0], folder+"\\"+x[1])
-        except FileExistsError:
-            print("File", x[1], "exists in", folder, "folder.")
-            try:
-                os.rename(x[0], folder+"\\Already Exists\\"+x[1][:-4]+" (1)"+x[1][-4:])  
-            except:
-                os.remove(x[0])
-                pass
+            os.rename(oldFolder+oldName, newFolder+"\\Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
+        except:
+            os.remove(oldFolder+oldName)
             pass
-        except FileNotFoundError:
-            print(x[1]+" not found.")
-            pass
+        pass
+    except FileNotFoundError:
+        print(oldName+" not found.")
+        pass
 
 def startProcessing(x):
     pdfFileLocation = x[0]
@@ -346,11 +347,11 @@ def startProcessing(x):
         if pdf.orderNumber != None:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
             if upload == "Success":
-                moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Done") 
+                moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
             else:
                 appendToDebugLog("Could not upload ", OrderNumber = pdf.orderNumber, ErrorMessage=upload['failureText'])
                 writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
-                moveToFolder([[pdfFileLocation+pdf.fileName, pdf.fileName]], pdfFolderLocation+"Errored") 
+                moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored") 
             print("Compute time: ", str(time.time()-start_time))
             return True
 
@@ -365,11 +366,14 @@ def main(pool, files):
     try:
         importlib.reload(conversionlists)
         from conversionlists import headerConversionList, dealerCodes, ignoreList
-    except SyntaxError as exc:
-        appendToDebugLog("Error in conversionlists.py! Did you forget a comma on line "+str(int(exc.args[1][1])-1)+"?")
-    except Exception as exc:
-        appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(exc), Details=exc.args)
-    else:                               # if no errors in reloading conversionlists.py, update cache and run!
+    except Exception as exc:        # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+        for x in files:
+            moveToFolder(x[0], x[1], pdfFolderLocation+"Errored")
+        if type(exc) == SyntaxError:
+            appendToDebugLog("Error in conversionlists.py! Did you forget a comma on line "+str(int(exc.args[1][1])-1)+"?")
+        else:
+            appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(exc), Details=exc.args)
+    else:                           # if no errors in reloading conversionlists.py, update cache and run!
         updateAirtableRecordsCache()
         pool.imap_unordered(startProcessing, files)
 
