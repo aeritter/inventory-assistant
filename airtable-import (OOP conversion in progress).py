@@ -73,7 +73,6 @@ class document(object):
             self.records = {"records":self.getRecords()}
 
     def loadVariables(self):
-        self.fields = False         # becomes a dictionary
         self.mainRegex = mainRegex[self.fileType]
         self.specificInfoRegex = specificInfoRegex[self.fileType]
         self.uniqueInfoList = uniqueInfoList[self.fileType]
@@ -87,7 +86,7 @@ class document(object):
             return "Error"
         return fileText
 
-    def determineFileType(self):        #remove filename
+    def determineFileType(self):
         line1 = self.fileText.split('\n', 1)[0]                 # first line of .txt file
         line2 = self.fileText.split('\n', 2)[1]                 # second line of .txt file
         if "Welcome to Volvo" in line1:
@@ -101,9 +100,6 @@ class document(object):
         else:
             print("Unknown format.")
             self.fileType = "Unknown"
-
-        # if self.containsMultipleInvoices == True:
-        #     self.fileType = "Multiple"
 
         return self.fileType
 
@@ -157,7 +153,6 @@ class document(object):
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
             moveToFolder(self.location,self.fileName, self.location, newName)
             self.fileName = newName
-            self.fields = fields
             return fields
 
         else:
@@ -301,16 +296,7 @@ def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     try:
         a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
-        # extra = ''
-        # if 'orderNumber' in kwargs:
-        #     orderNumber = kwargs['orderNumber']
-        # else:
-        #     orderNumber = 'Unknown'
-        # if 'extra' in kwargs:
-        #     extra = kwargs['extra']
-        print(','.join('{0}:{1!r}'.format(x, y) for x, y in kwargs.items()))
         a.write(str(time.ctime())+','.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
-        # a.write(str(time.ctime()+", Order #: "+orderNumber+", Error: "+errormsg+', Extra information: '+str(extra)+'\n'))
         a.close()
     except:
         print("Can't append to debug log file.")
