@@ -15,7 +15,7 @@ with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt fil
     url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
 pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
-pdftotextExecutable = mainFolder+'pdftotext.exe'         # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+pdftotextExecutable = mainFolder+'pdftotext.exe'     # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 
 import conversionlists
 from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
@@ -34,9 +34,9 @@ class document(object):
         self.location = fileParentFolder
         self.orderNumber = None
         self.fileText = self.getPDFText(fileName)
-        self.fileType = self.determineFileType()                                   # looping
+        self.fileType = self.determineFileType()
         self.sendType = ''
-        self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)    # here
+        self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)
         self.debug = False
         if self.containsMultipleInvoices == False:
             self.loadVariables()
@@ -52,7 +52,13 @@ class document(object):
     def getPDFText(self, filename):
         try:
             fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', self.location+self.fileName,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
-        except:
+        except Exception as exc:
+            # try:
+            #     os.remove(pdftotextExecutable)
+            #     downloadpdftotext()
+            # except Exception as exc:
+            #     print(exc)
+            print(exc)
             return "Error"
         return fileText
 
@@ -86,6 +92,7 @@ class document(object):
         RegexMatches = re.findall(self.mainRegex, self.fileText)
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
+            self.debug = True
             writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(distinctInfo[0]):
@@ -121,6 +128,7 @@ class document(object):
             elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
+            print(self.location,self.fileName, self.location, newName)
             moveToFolder(self.location,self.fileName, self.location, newName)
             self.fileName = newName
             return fields
@@ -219,7 +227,7 @@ def postOrUpdate(content, sendType):
         return requests.patch(url,data=None,json=content,headers=AirtableAPIHeaders)
 
 
-def uploadDataToAirtable(content, sendType):                                # uploads the data to Airtable
+def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
     x = postOrUpdate(content, sendType)
     # print("\n\nPost response: ",x.json())
     print("\nPost HTTP code:", x.status_code)
@@ -299,6 +307,9 @@ def startProcessing(x):
         pdf.splitPDF()
         print("Compute time: ", str(time.time()-start_time))
         return None
+    elif pdf.debug == True:
+        moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
+        print("Compute time: ", str(time.time()-start_time))
     else:
         if pdf.orderNumber != None:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
@@ -311,7 +322,7 @@ def startProcessing(x):
             print("Compute time: ", str(time.time()-start_time))
             return True
 
-def checkFolder(folderLocation):
+def getPDFsInFolder(folderLocation):
     filesInFolder = []
     for filename in os.listdir(folderLocation):
         if str(filename)[-3:] == 'pdf':
@@ -323,8 +334,8 @@ def importAndCheckConversionlists():
         importlib.reload(conversionlists)
         from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
     except Exception as exc:        
-        return exc            # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-    else:                           # if no errors in reloading conversionlists.py, update cache and run!
+        return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+    else:                       # if no errors in reloading conversionlists.py, update cache and run!
         return True
 
 def isdir(x):
@@ -333,55 +344,72 @@ def isdir(x):
 def makedir(x):
     return Path(pdfFolderLocation+x).mkdir()
 
-def initialization():
-    try:                                                    # create folders if they don't exist
-        dirlist = ['Debug','Done','Errored','Suspended','Unsplit TRKINV']   
-        if isdir(''):
-            for x in dirlist:
-                if isdir(x) != True:
-                    makedir(x)
-    except Exception as exc:
-        print(exc.args)
-        return False
+class initialize():
 
-    try:                                                    # check if conversionlists.py has syntax errors
-        isConversionlistsOkay = importAndCheckConversionlists()
-        suspendedFolderContents = checkFolder(pdfFolderLocation+"Suspended\\")
-        if isConversionlistsOkay == True:
-            if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
-                print("Suspended files found, checking config")
-                for x in suspendedFolderContents:
-                    moveToFolder(x[0], x[1], pdfFolderLocation)
+    @staticmethod
+    def Folder_Check():
+        try:                                                    # create folders if they don't exist
+            dirlist = ['Debug','Done','Errored','Suspended','Unsplit TRKINV']   
+            if isdir(''):
+                for x in dirlist:
+                    if isdir(x) != True:
+                        makedir(x)
+            # if Path(pdftotextExecutable).exists() != True:
+            #     downloadpdftotext()
+            # elif Path(pdftotextExecutable).touch() != True:
+            #     appendToDebugLog('Cannot access pdftotext.exe!')
+            #     os.remove(pdftotextExecutable)
+            #     return False
             return True
-        else:                                               # but if it does, move PDFs found in main folder to Suspended folder and write log
-            mainFolderContents = checkFolder(pdfFolderLocation)
-            if len(mainFolderContents) > 0:
-                if type(isConversionlistsOkay) == SyntaxError:
-                    appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(isConversionlistsOkay.args[1][1])-1)+" or "+str(int(isConversionlistsOkay.args[1][1]))+"?")
-                else:
-                    appendToDebugLog('Error in conversionlists.py!', ExceptionType=type(isConversionlistsOkay), Details=isConversionlistsOkay.args)
-                for x in checkFolder(pdfFolderLocation):
-                    moveToFolder(x[0], x[1], pdfFolderLocation+"Suspended")
+        except Exception as exc:
+            print(exc.args)
             return False
-    except Exception as exc:
-        appendToDebugLog("Initialization failed", exceptiontype=type(exc), exceptionargs=exc.args)
-        return False
+
+    @staticmethod
+    def conversionlists_Check():
+
+        try:                                                    # check if conversionlists.py has syntax errors
+            conversionlistsCheck = importAndCheckConversionlists()
+            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended\\")
+            if conversionlistsCheck == True:
+                if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
+                    print("Suspended files found, checking config")
+                    for x in suspendedFolderContents:
+                        moveToFolder(x[0], x[1], pdfFolderLocation)
+                return True
+            else:                                               # but if it does, move PDFs found in main folder to Suspended folder and write log
+                mainFolderContents = getPDFsInFolder(pdfFolderLocation)
+                if len(mainFolderContents) > 0:
+                    if type(conversionlistsCheck) == SyntaxError:
+                        appendToDebugLog("Error in conversionlists.py, moving files to Suspended folder! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
+                    else:
+                        appendToDebugLog('Error with conversionlists.py, moving files to Suspended folder!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
+                    for x in getPDFsInFolder(pdfFolderLocation):
+                        moveToFolder(x[0], x[1], pdfFolderLocation+"Suspended")
+                return False
+        except Exception as exc:
+            appendToDebugLog("Initialization failed", exceptiontype=type(exc), exceptionargs=exc.args)
+            return False
+    
+    @staticmethod
+    def pdftotext_Check():
+        print("Downloading pdftotext")
             
 
 
 def main(pool):
     try:
-        if initialization() == True:
-            ListOfFiles = checkFolder(pdfFolderLocation)
-            ListOfFiles.extend(checkFolder(pdfFolderLocation+"Debug\\"))
-            if len(ListOfFiles) > 0:
-                updateAirtableRecordsCache()
-                pool.imap_unordered(startProcessing, ListOfFiles)
-
+        if initialize.Folder_Check() == True:
+            ListOfFiles = getPDFsInFolder(pdfFolderLocation)
+            ListOfFiles.extend(getPDFsInFolder(pdfFolderLocation+"Debug\\"))
+            if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended\\")) > 0:
+                if initialize.conversionlists_Check() == True:
+                    updateAirtableRecordsCache()
+                    pool.imap_unordered(startProcessing, ListOfFiles)
             else:
                 print("No files found.")
         else:
-            print("Initialization failed")
+            print("Folder check failed")
         return
 
     except Exception as exc:

@@ -4,7 +4,7 @@ mainRegex = {   # regex to pull line items out from the pdftotext output
     "Mack":re.compile(r'^(?:   \S{6} {2,6}| {3,5})(?: |(.{2,32})(?<! ) +(.*)\n)', flags=re.M),
     "Volvo":re.compile(r'^ {3,6}(\S{3})\S{3} +. +. +(.*?)(:?  |\d\.\d\n)', flags=re.M),
     "MackInvoice":re.compile(r'^ (\S{3})\S{4} +(.*?) {4,}', flags=re.M),
-    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S', flags=re.M)
+    "VolvoInvoice":re.compile(r'^(\S{3})\S{4} +(.*?) {2,}?\S{,7}$', flags=re.M)
     }
 distinctInfoRegex = {   # regex to pull field entries directly from the pdftotext output
     "Mack":re.compile(r'^(\w*?) .*?GSO:(.*?) .*?Model Year:(\w+)', flags=re.S),
@@ -52,9 +52,9 @@ headerConversionList = {
 # Volvo
     '008':['Model'],
     'A19':['Year', r'(\d*?) '],
-    '2CX':['Sleeper',r'(\d.*?(?:-ROOF|ROOF)|DAY CAB)'],
-    '101':['Engine Make',r'(\w*?) ', 'Engine Model',r'^.*? (\w*?) ', 'HP',r'(\d{3}HP)'],
-    '270':['Trans Model','','Transmission',r'(VOLVO|ALLISON)'],
+    '2CX':['Sleeper',r'(DAY CAB|.*)'],
+    '101':['Engine Make',r'(VOLVO|MACK)', 'Engine Model',r'(?:^| )([A-Z]\d.*?) ', 'HP',r'(\d{3}HP)'],
+    '270':['Trans Model','','Transmission',r'(VOLVO|ALLISON|EATON|FULLER)'],
     '330':['Rear Axle',r'.*? (\d.*?)LB'],
     '350':['Suspension'],
     '370':['Front Axle',r'.*? (\d.*?)LB'],
@@ -67,9 +67,10 @@ headerConversionList = {
     '980':['Color'],
 
 # Invoices
+    '002':['Sleeper', r'(DAYCAB|DAY CAB)'],
     '005':['Body'],
-    '100':['Engine Model',r'(\w*?) ', 'Engine Make',r'^.*? (\w*?) ', 'HP',r'(\d{3}HP)'],
-    '136':['Transmission', r'(ALLISON|MACK|EATON)', 'Trans Model','', 'Trans Model', r'^\S* (\w+\d+.*?) .*$'], # yes, trans model is in here twice for 136. Trans model will be matched to the entire line, then it will be changed if it matches on the second run.
+    '100':['Engine Make',r'(VOLVO|MACK)', 'Engine Model',r'(?:^| )([A-Z]\d.*?) ', 'HP',r'(\d{3}HP)'],
+    '136':['Transmission', r'(ALLISON|MACK|EATON|FULLER)', 'Trans Model','', 'Trans Model', r'^\S* (\w+\d+.*?) .*$'], # yes, trans model is in here twice for 136. Trans model will be matched to the entire line, then it will be changed if it matches on the second run.
     '016':['Sleeper',r'(.*?)(?:\(|)'],
     '240':['Front Axle',r'.*?(\S*?)#'],
     '268':['Rear Axle',r'.*?(\S*?)#'],
