@@ -8,6 +8,10 @@ debug = True
 
 mainFolder = '/usr/src/app/'
 settingsFolder = mainFolder+'network-share/Settings/'
+# mainFolder = "C:\\python-test\\"                      # for testing purposes
+# settingsFolder = mainFolder+"Settings\\"
+# pdfFolderLocation = mainFolder
+# pdftotextExecutable = settingsFolder+"pdftotext.exe"
 
 with open(settingsFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
     api_key = key.read()
@@ -129,7 +133,6 @@ class document(object):
             elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
-            print(self.location,self.fileName, self.location, newName)
             moveToFolder(self.location,self.fileName, self.location, newName)
             self.fileName = newName
             return fields
