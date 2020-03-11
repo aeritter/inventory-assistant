@@ -6,17 +6,16 @@ from pathlib import Path
 
 debug = True
 
-mainFolder = '/usr/src/app/'
-settingsFolder = mainFolder+'network-share/Settings/'
+mainFolder = 'C:\\airtabletest\\'
 
-with open(settingsFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
+with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
     api_key = key.read()
 
-with open(settingsFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
+with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
     url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-pdfFolderLocation = mainFolder+'network-share/'       # location of .pdf files
-pdftotextExecutable = settingsFolder+'pdftotext'     # location of pdftotext file (obtained from xpdfreader.com commandline tools, linux build)
+pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
+pdftotextExecutable = mainFolder+'pdftotext.exe'     # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
 
 import conversionlists
 from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
@@ -94,8 +93,8 @@ class document(object):
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
             self.debug = True
-            writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
-            writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
+            writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
+            writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
@@ -180,7 +179,7 @@ class document(object):
         pageCounter = 0
         pageGroupNum = 0
         moveToFolder(pdfFolderLocation, self.fileName, pdfFolderLocation+"Unsplit TRKINV")
-        readOldFile = PDFReader(pdfFolderLocation+'Unsplit TRKINV/'+self.fileName)
+        readOldFile = PDFReader(pdfFolderLocation+'Unsplit TRKINV\\'+self.fileName)
         for y, z in enumerate(pageGroups):                          # can probably be multithreaded
             newFile = PDFWriter()
             if z > 1:
@@ -274,7 +273,7 @@ def getRecordID(orderNumber):
 def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     try:
-        a = open(pdfFolderLocation+"Debug/Debug log.txt", "a+")
+        a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
         a.write("\n"+str(time.ctime())+" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
         a.close()
     except:
@@ -285,11 +284,11 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
     if newName == None:
         newName = oldName
     try:
-        os.rename(oldFolder+oldName, newFolder+"/"+newName)
+        os.rename(oldFolder+oldName, newFolder+"\\"+newName)
     except FileExistsError:
         print("File", newName, "exists in", newFolder, "folder.")
         try:
-            os.rename(oldFolder+oldName, newFolder+"/Already Exists/"+newName[:-4]+" (1)"+newName[-4:])  
+            os.rename(oldFolder+oldName, newFolder+"\\Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
         except:
             os.remove(oldFolder+oldName)
             pass
@@ -318,7 +317,7 @@ def startProcessing(x):
                 moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
             else:
                 appendToDebugLog("Could not upload ", OrderNumber = pdf.orderNumber, ErrorMessage=upload['failureText'])
-                writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug/", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
+                writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
                 moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored") 
             print("Compute time: ", str(time.time()-start_time))
             return True
@@ -371,7 +370,7 @@ class initialize():
 
         try:                                                    # check if conversionlists.py has syntax errors
             conversionlistsCheck = importAndCheckConversionlists()
-            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended/")
+            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended\\")
             if conversionlistsCheck == True:
                 if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
                     print("Suspended files found, checking config")
@@ -402,12 +401,12 @@ def main(pool):
     try:
         if initialize.Folder_Check() == True:
             ListOfFiles = getPDFsInFolder(pdfFolderLocation)
-            ListOfFiles.extend(getPDFsInFolder(pdfFolderLocation+"Debug/"))
-            if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended/")) > 0:
+            ListOfFiles.extend(getPDFsInFolder(pdfFolderLocation+"Debug\\"))
+            if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended\\")) > 0:
                 if initialize.conversionlists_Check() == True:
                     updateAirtableRecordsCache()
-                    pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
-            else:                                                       #        create a dictionary with the groupings of data for easier regex debugging. Maybe add a Data class?
+                    pool.imap_unordered(startProcessing, ListOfFiles)
+            else:
                 print("No files found.")
         else:
             print("Folder check failed")

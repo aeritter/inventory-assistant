@@ -1,8 +1,4 @@
 # Airtable Import
-To run: open the folder containing airtable-import.py and Dockerfile in Command Prompt or Windows PowerShell. Run this command: `docker image build -t airtable-import .`
-
-Once the image has been built, run it with the following command (with the folder path replaced): `docker run -v //c/path/to/pdf/folder:/usr/src/app/network-share --name airtable --rm airtable-import`
-
 ## airtable-import.py
 This is the main script. Every x seconds, it checks a specific folder for .pdf files. If it finds any, it runs its processes on them to pull out the relevant information for creating a record in Airtable or updating one. It then moves those .pdf files to either the Done folder or the Errored folder, depending on whether the upload to Airtable was successful.
 
