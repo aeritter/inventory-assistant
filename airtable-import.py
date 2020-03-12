@@ -1,4 +1,4 @@
-import re, os.path, subprocess, time, importlib
+import re, os.path, subprocess, time, importlib, sys
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -6,25 +6,52 @@ from pathlib import Path
 
 debug = True
 
-mainFolder = 'C:\\airtabletest\\'
+mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
+with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
+    pdfFolderLocation = pdffolder.read()
+settingsFolder = pdfFolderLocation+"Settings/"
+pdftotextExecutable = settingsFolder+"pdftotext.exe"
 
-with open(mainFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
+with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
     api_key = key.read()
 
-with open(mainFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
-    url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
+with open(settingsFolder+'url.txt', 'r') as url:                    # Location of .txt file containing URL for the table in Airtable 
+    url = url.read()                                                #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-pdfFolderLocation = mainFolder+'python-test\\'       # location of .pdf files
-pdftotextExecutable = mainFolder+'pdftotext.exe'     # location of pdftotext.exe file (obtained from xpdfreader.com commandline tools)
+with open(settingsFolder+'url_fields.txt', 'r') as urlFields:       # Location of .txt file containing the part appended to the URL for getting specific fields
+    urlFields = urlFields.read()
 
-import conversionlists
-from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
+sys.path.append(settingsFolder)                                     # Give script a path to find conversionlists.py
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+api_key),
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
 }
+
+
+class convlists(object):
+    def __init__(self):
+        import conversionlists
+        self.conversionlists = conversionlists
+        self.update()
+    def update(self):
+        try:
+            import conversionlists
+            importlib.reload(conversionlists)
+            from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
+            self.headerConversionList = headerConversionList
+            self.dealerCodes = dealerCodes
+            self.ignoreList = ignoreList
+            self.mainRegex = mainRegex
+            self.distinctInfoRegex = distinctInfoRegex 
+            self.distinctInfoList = distinctInfoList
+            self.make = make
+            self.status = status
+        except Exception as exc:        
+            return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+        else:                       # if no errors in reloading conversionlists.py, update cache and run!
+            return True
 
 
 class document(object):
@@ -37,17 +64,18 @@ class document(object):
         self.fileType = self.determineFileType()
         self.sendType = ''
         self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)
-        self.debug = False
+        self.inDebugFolder = False
         if self.containsMultipleInvoices == False:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
 
     def loadVariables(self):
-        self.mainRegex = mainRegex[self.fileType]
-        self.distinctInfoRegex = distinctInfoRegex[self.fileType]
-        self.distinctInfoList = distinctInfoList[self.fileType]
-        self.make = make[self.fileType]
-        self.status = status[self.fileType]
+        var.update()
+        self.mainRegex = var.mainRegex[self.fileType]
+        self.distinctInfoRegex = var.distinctInfoRegex[self.fileType]
+        self.distinctInfoList = var.distinctInfoList[self.fileType]
+        self.make = var.make[self.fileType]
+        self.status = var.status[self.fileType]
 
     def getPDFText(self, filename):
         try:
@@ -92,14 +120,14 @@ class document(object):
         RegexMatches = re.findall(self.mainRegex, self.fileText)
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
-            self.debug = True
-            writefile(RegexMatches, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-regexmatches).txt")
-            writefile(self.fileText, pdfFolderLocation+"Debug\\", self.fileName[:-4]+" (debug-pdftotext).txt")
+            self.inDebugFolder = True
+            writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
+            writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
-            if x[0] in headerConversionList and x[1] not in ignoreList:
-                fieldEntries.update(runRegExMatching(x, headerConversionList))
+            if x[0] in var.headerConversionList and x[1] not in var.ignoreList:
+                fieldEntries.update(runRegExMatching(x, var.headerConversionList))
 
         if 'Order Number' not in fieldEntries:
             try:
@@ -108,8 +136,8 @@ class document(object):
                 pass
         
         if 'Dealer Code' in fieldEntries:
-            if fieldEntries['Dealer Code'] in dealerCodes:
-                loc = dealerCodes[fieldEntries['Dealer Code']]
+            if fieldEntries['Dealer Code'] in var.dealerCodes:
+                loc = var.dealerCodes[fieldEntries['Dealer Code']]
                 fieldEntries.update({"Location":loc})
         fieldEntries["Make"] = self.make
         fieldEntries["Status"] = self.status
@@ -128,7 +156,6 @@ class document(object):
             elif self.status == "A":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
-            print(self.location,self.fileName, self.location, newName)
             moveToFolder(self.location,self.fileName, self.location, newName)
             self.fileName = newName
             return fields
@@ -241,9 +268,9 @@ def retrieveRecordsFromAirtable(offset):
     while True:
         try:
             if offset == None:
-                x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status", data=None, headers=AirtableAPIHeaders)
+                x = requests.get(url+urlFields, data=None, headers=AirtableAPIHeaders)
             else:
-                x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&offset="+offset, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(url+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
         
             records = x.json()['records']
             if 'offset' in json.loads(x.text):
@@ -307,7 +334,7 @@ def startProcessing(x):
         pdf.splitPDF()
         print("Compute time: ", str(time.time()-start_time))
         return None
-    elif pdf.debug == True:
+    elif pdf.inDebugFolder == True:             # if it came from the debug folder, move to Done without uploading to Airtable
         moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
         print("Compute time: ", str(time.time()-start_time))
     else:
@@ -329,14 +356,15 @@ def getPDFsInFolder(folderLocation):
             filesInFolder.append([folderLocation, filename])
     return filesInFolder
 
-def importAndCheckConversionlists():
-    try:
-        importlib.reload(conversionlists)
-        from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
-    except Exception as exc:        
-        return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-    else:                       # if no errors in reloading conversionlists.py, update cache and run!
-        return True
+# def importAndCheckConversionlists():
+#     try:
+#         importlib.reload(conversionlists)
+#         from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
+#         print(distinctInfoList)
+#     except Exception as exc:        
+#         return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+#     else:                       # if no errors in reloading conversionlists.py, update cache and run!
+#         return True
 
 def isdir(x):
     return Path(pdfFolderLocation+x).is_dir()
@@ -369,8 +397,8 @@ class initialize():
     def conversionlists_Check():
 
         try:                                                    # check if conversionlists.py has syntax errors
-            conversionlistsCheck = importAndCheckConversionlists()
-            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended\\")
+            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended/")
+            conversionlistsCheck = var.update()
             if conversionlistsCheck == True:
                 if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
                     print("Suspended files found, checking config")
@@ -405,8 +433,10 @@ def main(pool):
             if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended\\")) > 0:
                 if initialize.conversionlists_Check() == True:
                     updateAirtableRecordsCache()
-                    pool.imap_unordered(startProcessing, ListOfFiles)
-            else:
+                    threads = pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
+                    for x in threads:                                   # waits until all threads are done before continuing
+                        pass
+            else:                                                       #        create a dictionary with the groupings of data for easier regex debugging. Maybe add a Data class?
                 print("No files found.")
         else:
             print("Folder check failed")
@@ -416,8 +446,10 @@ def main(pool):
         print(exc.args)
 
 
+var = convlists()
+
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     while True:
         main(p)
-        time.sleep(10)
+        time.sleep(5)
