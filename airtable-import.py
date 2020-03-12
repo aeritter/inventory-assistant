@@ -1,4 +1,4 @@
-import re, os.path, subprocess, time, importlib
+import re, os.path, subprocess, time, importlib, sys
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -6,22 +6,22 @@ from pathlib import Path
 
 debug = True
 
-mainFolder = '/usr/src/app/'
-settingsFolder = mainFolder+'network-share/Settings/'
-# mainFolder = "C:\\python-test\\"                      # for testing purposes
-# settingsFolder = mainFolder+"Settings\\"
-# pdfFolderLocation = mainFolder
-# pdftotextExecutable = settingsFolder+"pdftotext.exe"
+mainFolder = os.path.dirname(os.path.abspath(__file__))+"\\"
+with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
+    pdfFolderLocation = pdffolder.read()
+settingsFolder = pdfFolderLocation+"Settings\\"
+pdftotextExecutable = settingsFolder+"pdftotext.exe"
 
-with open(settingsFolder+'api_key.txt', 'r') as key:     # location of .txt file containing API token
+with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
     api_key = key.read()
 
-with open(settingsFolder+'url.txt', 'r') as url:         #      Location of .txt file containing URL for the table in Airtable 
-    url = url.read()                                 #   (found in api.airtable.com, not the same as the URL you see when browsing)
+with open(settingsFolder+'url.txt', 'r') as url:                    # Location of .txt file containing URL for the table in Airtable 
+    url = url.read()                                                #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
-pdfFolderLocation = mainFolder+'network-share/'       # location of .pdf files
-pdftotextExecutable = settingsFolder+'pdftotext'     # location of pdftotext file (obtained from xpdfreader.com commandline tools, linux build)
+with open(settingsFolder+'url_fields.txt', 'r') as urlFields:       # Location of .txt file containing the part appended to the URL for getting specific fields
+    urlFields = urlFields.read()
 
+sys.path.append(settingsFolder)                                     # Give script a path to find conversionlists.py
 import conversionlists
 from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
 
@@ -42,7 +42,7 @@ class document(object):
         self.fileType = self.determineFileType()
         self.sendType = ''
         self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)
-        self.debug = False
+        self.inDebugFolder = False
         if self.containsMultipleInvoices == False:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
@@ -97,7 +97,7 @@ class document(object):
         RegexMatches = re.findall(self.mainRegex, self.fileText)
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
-            self.debug = True
+            self.inDebugFolder = True
             writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
         for n, x in enumerate(distinctInfo[0]):
@@ -245,9 +245,9 @@ def retrieveRecordsFromAirtable(offset):
     while True:
         try:
             if offset == None:
-                x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status", data=None, headers=AirtableAPIHeaders)
+                x = requests.get(url+urlFields, data=None, headers=AirtableAPIHeaders)
             else:
-                x = requests.get(url+"?fields%5B%5D=Order+Number&fields%5B%5D=Status&offset="+offset, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(url+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
         
             records = x.json()['records']
             if 'offset' in json.loads(x.text):
@@ -311,7 +311,7 @@ def startProcessing(x):
         pdf.splitPDF()
         print("Compute time: ", str(time.time()-start_time))
         return None
-    elif pdf.debug == True:
+    elif pdf.inDebugFolder == True:             # if it came from the debug folder, move to Done without uploading to Airtable
         moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
         print("Compute time: ", str(time.time()-start_time))
     else:
@@ -409,7 +409,9 @@ def main(pool):
             if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended/")) > 0:
                 if initialize.conversionlists_Check() == True:
                     updateAirtableRecordsCache()
-                    pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
+                    threads = pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
+                    for x in threads:                                   # waits until all threads are done before continuing
+                        pass
             else:                                                       #        create a dictionary with the groupings of data for easier regex debugging. Maybe add a Data class?
                 print("No files found.")
         else:
