@@ -6,10 +6,10 @@ from pathlib import Path
 
 debug = True
 
-mainFolder = os.path.dirname(os.path.abspath(__file__))+"\\"
+mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
     pdfFolderLocation = pdffolder.read()
-settingsFolder = pdfFolderLocation+"Settings\\"
+settingsFolder = pdfFolderLocation+"Settings/"
 pdftotextExecutable = settingsFolder+"pdftotext.exe"
 
 with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
@@ -22,14 +22,36 @@ with open(settingsFolder+'url_fields.txt', 'r') as urlFields:       # Location o
     urlFields = urlFields.read()
 
 sys.path.append(settingsFolder)                                     # Give script a path to find conversionlists.py
-import conversionlists
-from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+api_key),
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
 }
+
+
+class convlists(object):
+    def __init__(self):
+        import conversionlists
+        self.conversionlists = conversionlists
+        self.update()
+    def update(self):
+        try:
+            import conversionlists
+            importlib.reload(conversionlists)
+            from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
+            self.headerConversionList = headerConversionList
+            self.dealerCodes = dealerCodes
+            self.ignoreList = ignoreList
+            self.mainRegex = mainRegex
+            self.distinctInfoRegex = distinctInfoRegex 
+            self.distinctInfoList = distinctInfoList
+            self.make = make
+            self.status = status
+        except Exception as exc:        
+            return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+        else:                       # if no errors in reloading conversionlists.py, update cache and run!
+            return True
 
 
 class document(object):
@@ -48,11 +70,12 @@ class document(object):
             self.records = {"records":self.getRecords()}
 
     def loadVariables(self):
-        self.mainRegex = mainRegex[self.fileType]
-        self.distinctInfoRegex = distinctInfoRegex[self.fileType]
-        self.distinctInfoList = distinctInfoList[self.fileType]
-        self.make = make[self.fileType]
-        self.status = status[self.fileType]
+        var.update()
+        self.mainRegex = var.mainRegex[self.fileType]
+        self.distinctInfoRegex = var.distinctInfoRegex[self.fileType]
+        self.distinctInfoList = var.distinctInfoList[self.fileType]
+        self.make = var.make[self.fileType]
+        self.status = var.status[self.fileType]
 
     def getPDFText(self, filename):
         try:
@@ -103,8 +126,8 @@ class document(object):
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
-            if x[0] in headerConversionList and x[1] not in ignoreList:
-                fieldEntries.update(runRegExMatching(x, headerConversionList))
+            if x[0] in var.headerConversionList and x[1] not in var.ignoreList:
+                fieldEntries.update(runRegExMatching(x, var.headerConversionList))
 
         if 'Order Number' not in fieldEntries:
             try:
@@ -113,8 +136,8 @@ class document(object):
                 pass
         
         if 'Dealer Code' in fieldEntries:
-            if fieldEntries['Dealer Code'] in dealerCodes:
-                loc = dealerCodes[fieldEntries['Dealer Code']]
+            if fieldEntries['Dealer Code'] in var.dealerCodes:
+                loc = var.dealerCodes[fieldEntries['Dealer Code']]
                 fieldEntries.update({"Location":loc})
         fieldEntries["Make"] = self.make
         fieldEntries["Status"] = self.status
@@ -333,14 +356,15 @@ def getPDFsInFolder(folderLocation):
             filesInFolder.append([folderLocation, filename])
     return filesInFolder
 
-def importAndCheckConversionlists():
-    try:
-        importlib.reload(conversionlists)
-        from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
-    except Exception as exc:        
-        return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-    else:                       # if no errors in reloading conversionlists.py, update cache and run!
-        return True
+# def importAndCheckConversionlists():
+#     try:
+#         importlib.reload(conversionlists)
+#         from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
+#         print(distinctInfoList)
+#     except Exception as exc:        
+#         return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
+#     else:                       # if no errors in reloading conversionlists.py, update cache and run!
+#         return True
 
 def isdir(x):
     return Path(pdfFolderLocation+x).is_dir()
@@ -373,8 +397,8 @@ class initialize():
     def conversionlists_Check():
 
         try:                                                    # check if conversionlists.py has syntax errors
-            conversionlistsCheck = importAndCheckConversionlists()
             suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended/")
+            conversionlistsCheck = var.update()
             if conversionlistsCheck == True:
                 if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
                     print("Suspended files found, checking config")
@@ -422,8 +446,10 @@ def main(pool):
         print(exc.args)
 
 
+var = convlists()
+
 if __name__ == "__main__":
     p = multiprocessing.Pool()
     while True:
         main(p)
-        time.sleep(10)
+        time.sleep(5)
