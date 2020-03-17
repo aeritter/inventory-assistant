@@ -3,6 +3,7 @@ import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
 from pathlib import Path
+from airtableconnector import airtable
 
 debug = True
 
@@ -86,7 +87,7 @@ class document(object):
             #     downloadpdftotext()
             # except Exception as exc:
             #     print(exc)
-            print(exc)
+            print("getPDFText() failed: ",str(exc))
             return "Error"
         return fileText
 
@@ -140,7 +141,7 @@ class document(object):
                 loc = var.dealerCodes[fieldEntries['Dealer Code']]
                 fieldEntries.update({"Location":loc})
         fieldEntries["Make"] = self.make
-        fieldEntries["Status"] = self.status
+        fieldEntries["Status Paste"] = self.status
         if 'Order Number' in fieldEntries:
             self.orderNumber = fieldEntries['Order Number']
             id = getRecordID(fieldEntries['Order Number'])
@@ -151,9 +152,9 @@ class document(object):
                 self.sendType = "Post"
 
             OrderOrInvoice = ''
-            if self.status == "O":                  # Order means the truck has been ordered but is not yet available (O)
+            if self.status == "on order":                  # Order means the truck has been ordered but is not yet available (O)
                 OrderOrInvoice = "Order - "
-            elif self.status == "A":                # Invoice means the truck has been made an is available (A)
+            elif self.status == "in stock":                # Invoice means the truck has been made an is available (A)
                 OrderOrInvoice = "Invoice - "
             newName = OrderOrInvoice+self.orderNumber+'.pdf'
             moveToFolder(self.location,self.fileName, self.location, newName)
@@ -256,22 +257,21 @@ def postOrUpdate(content, sendType):
 
 def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
     x = postOrUpdate(content, sendType)
-    # print("\n\nPost response: ",x.json())
-    print("\nPost HTTP code:", x.status_code)
+    print("\nPost HTTP code:", x.status_code, "  |   Send type:",sendType)
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
         print("Success! Sent via "+sendType+"\n")
         return "Success"
     else:
-        return {'content':str(content), 'failureText':str(json.loads(x.text)['error']['message'])}
+        return {'content':str(content), 'status code: ':str(x.status_code), 'failureText':str(json.loads(x.text)['error']['message'])}
 
-def retrieveRecordsFromAirtable(offset):
+def retrieveRecordsFromAirtable(offset=None):
     while True:
         try:
             if offset == None:
                 x = requests.get(url+urlFields, data=None, headers=AirtableAPIHeaders)
             else:
                 x = requests.get(url+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
-        
+
             records = x.json()['records']
             if 'offset' in json.loads(x.text):
                 records.extend(retrieveRecordsFromAirtable(json.loads(x.text)['offset']))
@@ -282,8 +282,7 @@ def retrieveRecordsFromAirtable(offset):
             time.sleep(30)
 
 def updateAirtableRecordsCache():
-    ListOfAirtableRecords = str(retrieveRecordsFromAirtable(None)).replace("\'","\"") # pull records, convert to str, replace single quotes with double to make json format valid
-    writefile(ListOfAirtableRecords, mainFolder, 'listofrecords.json')
+    writefile(json.dumps(retrieveRecordsFromAirtable()), mainFolder, 'listofrecords.json')
 
 def loadAirtableRecordsCache():
     with open(mainFolder+'listofrecords.json', 'r') as cache:
@@ -338,6 +337,7 @@ def startProcessing(x):
         moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
         print("Compute time: ", str(time.time()-start_time))
     else:
+        # return pdf.records        # return records to main function, so they can be sent to an upload function to be grouped and uploaded (and returned if failed)
         if pdf.orderNumber != None:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
             if upload == "Success":
@@ -355,16 +355,6 @@ def getPDFsInFolder(folderLocation):
         if str(filename)[-3:] == 'pdf':
             filesInFolder.append([folderLocation, filename])
     return filesInFolder
-
-# def importAndCheckConversionlists():
-#     try:
-#         importlib.reload(conversionlists)
-#         from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
-#         print(distinctInfoList)
-#     except Exception as exc:        
-#         return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-#     else:                       # if no errors in reloading conversionlists.py, update cache and run!
-#         return True
 
 def isdir(x):
     return Path(pdfFolderLocation+x).is_dir()
@@ -390,7 +380,7 @@ class initialize():
             #     return False
             return True
         except Exception as exc:
-            print(exc.args)
+            print("Folder_Check() failed: ",exc.args)
             return False
 
     @staticmethod
@@ -436,6 +426,12 @@ def main(pool):
                     threads = pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
                     for x in threads:                                   # waits until all threads are done before continuing
                         pass
+                    # recordcompilation.addRecords(x for x in threads)
+                    # if recordcompilation.send() == False:
+                    #       for x in threads:
+                    #           y = recordcompilation.sendRecord(x)
+                    #           if y != True:
+                    #               movetofolder(originFile(x), "Errored")
             else:                                                       #        create a dictionary with the groupings of data for easier regex debugging. Maybe add a Data class?
                 print("No files found.")
         else:
@@ -443,7 +439,7 @@ def main(pool):
         return
 
     except Exception as exc:
-        print(exc.args)
+        print("main() failed: ",str(exc.args))
 
 
 var = convlists()
