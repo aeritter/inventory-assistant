@@ -1,4 +1,4 @@
-import re, os.path, subprocess, time, importlib, sys
+import re, os.path, subprocess, time, importlib, sys, win32file, win32con
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -385,29 +385,24 @@ class initialize():
 
     @staticmethod
     def conversionlists_Check():
-
-        try:                                                    # check if conversionlists.py has syntax errors
-            suspendedFolderContents = getPDFsInFolder(pdfFolderLocation+"Suspended/")
+        sleeptime = 10
+        while True:
             conversionlistsCheck = var.update()
             if conversionlistsCheck == True:
-                if len(suspendedFolderContents) != 0:           # if it doesn't, move files from Suspended folder back to main folder
-                    print("Suspended files found, checking config")
-                    for x in suspendedFolderContents:
-                        moveToFolder(x[0], x[1], pdfFolderLocation)
                 return True
-            else:                                               # but if it does, move PDFs found in main folder to Suspended folder and write log
-                mainFolderContents = getPDFsInFolder(pdfFolderLocation)
-                if len(mainFolderContents) > 0:
+            else:
+                if sleeptime == 10 or sleeptime == 3600:         # reduce number of entries appended to log file
                     if type(conversionlistsCheck) == SyntaxError:
                         appendToDebugLog("Error in conversionlists.py, moving files to Suspended folder! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
                     else:
                         appendToDebugLog('Error with conversionlists.py, moving files to Suspended folder!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
-                    for x in getPDFsInFolder(pdfFolderLocation):
-                        moveToFolder(x[0], x[1], pdfFolderLocation+"Suspended")
-                return False
-        except Exception as exc:
-            appendToDebugLog("Initialization failed", exceptiontype=type(exc), exceptionargs=exc.args)
-            return False
+                time.sleep(sleeptime)       # wait a bit, then check again. If not, increase time to wait (exponential backoff) and check again.
+                if sleeptime == 3600:
+                    pass
+                elif sleeptime > 3600:
+                    sleeptime = 3600
+                else:
+                    sleeptime *= 1.2
     
     @staticmethod
     def pdftotext_Check():
@@ -417,26 +412,33 @@ class initialize():
 
 def main(pool):
     try:
-        if initialize.Folder_Check() == True:
-            ListOfFiles = getPDFsInFolder(pdfFolderLocation)
-            ListOfFiles.extend(getPDFsInFolder(pdfFolderLocation+"Debug\\"))
-            if len(ListOfFiles) > 0 or len(getPDFsInFolder(pdfFolderLocation+"Suspended\\")) > 0:
-                if initialize.conversionlists_Check() == True:
-                    updateAirtableRecordsCache()
-                    threads = pool.imap_unordered(startProcessing, ListOfFiles)   # NOTES: return data here instead, then sort according to post/update, then upload. If they were in the debug folder,
-                    for x in threads:                                   # waits until all threads are done before continuing
-                        pass
-                    # recordcompilation.addRecords(x for x in threads)
-                    # if recordcompilation.send() == False:
-                    #       for x in threads:
-                    #           y = recordcompilation.sendRecord(x)
-                    #           if y != True:
-                    #               movetofolder(originFile(x), "Errored")
-            else:                                                       #        create a dictionary with the groupings of data for easier regex debugging. Maybe add a Data class?
-                print("No files found.")
-        else:
+        if initialize.Folder_Check() != True:
             print("Folder check failed")
-        return
+            raise Exception("Folder check failed")
+        print("Waiting for files.")
+        updateAirtableRecordsCache()
+        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME
+        dh = win32file.CreateFile(pdfFolderLocation, 0x0001, win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
+        while True:
+            changes = win32file.ReadDirectoryChangesW(dh, 8192, True, flags)
+            time.sleep(.2)
+            if initialize.conversionlists_Check() == False:
+                print("conversionlists_Check() failed!")
+                raise Exception("conversionlists_Check() failed!")
+            for x, filename in changes:
+                if x == 1 and filename[-3:] == 'pdf':
+                    fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
+                    if '\\' not in filename:
+                        pool.imap_unordered(startProcessing, [[fileloc, filename]])
+                    elif filename[:5] == 'Debug':
+                        pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
+            print("Waiting for files.")
+# recordcompilation.addRecords(x for x in threads)
+# if recordcompilation.send() == False:
+#       for x in threads:
+#           y = recordcompilation.sendRecord(x)
+#           if y != True:
+#               movetofolder(originFile(x), "Errored")
 
     except Exception as exc:
         print("main() failed: ",str(exc.args))
@@ -446,6 +448,4 @@ var = convlists()
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
-    while True:
-        main(p)
-        time.sleep(5)
+    main(p)
