@@ -3,7 +3,7 @@ import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
 from pathlib import Path
-from airtableconnector import airtable
+# from airtableconnector import airtable
 
 debug = True
 
@@ -228,10 +228,15 @@ def runRegExMatching(content, regexlist):
         for x in range(0,len(columnHeader),2):
             search = re.search(columnHeader[x+1],content[1])
             if search != None:
-                if len(search.groups()) > 0:
+                if len(search.groups()) > 0:            # if it contains one or more groups, create the entry and then append any extra groups to the value
                     preppedData[columnHeader[x]] = search.group(1)
-                else:
-                    preppedData[columnHeader[x]] = content[1]
+                    if any(search.groups()):            # if anything was matched by a group (and didn't all return None)
+                        preppedData[columnHeader[x]] = str()
+                        for y in search.groups():
+                            if y != None:
+                                preppedData[columnHeader[x]] += y
+                    else:
+                        preppedData[columnHeader[x]] = content[1]
     else:
         preppedData[columnHeader[0]] = content[1]
 
