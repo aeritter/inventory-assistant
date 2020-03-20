@@ -66,7 +66,9 @@ class document(object):
         self.sendType = ''
         self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)
         self.inDebugFolder = False
-        if self.containsMultipleInvoices == False:
+        if self.fileType == "Supplement":
+            moveToFolder(self.location, self.fileName, pdfFolderLocation+"Suspended") #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
+        elif self.containsMultipleInvoices == False:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
 
@@ -94,10 +96,13 @@ class document(object):
     def determineFileType(self):
         line1 = self.fileText.split('\n', 1)[0]                 # first line of .txt file
         line2 = self.fileText.split('\n', 2)[1]                 # second line of .txt file
+        line5 = self.fileText.split('\n', 5)[4]                 # 5th line
         if "Welcome to Volvo" in line1:
             self.fileType = "Volvo"
         elif "GSO:" in line2:
             self.fileType = "Mack"
+        elif "SUPPLEMENT" in line5:
+            self.fileType = "Supplement"
         elif "MACK TRUCKS, INC." in line1:
             self.fileType = "MackInvoice"
         elif "PAGE  1" in line1 or "PAGE 1" in line1:
@@ -124,6 +129,7 @@ class document(object):
             self.inDebugFolder = True
             writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
+            appendToDebugLog("Debug ran.",FileName=self.fileName, FileType=self.fileType)
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
@@ -333,6 +339,8 @@ def startProcessing(x):
     pdfFile = x[1]
     start_time = time.time()
     pdf = document(pdfFileLocation, pdfFile)
+    
+    print(pdf.orderNumber, pdf.records)
 
     if pdf.containsMultipleInvoices == True:
         pdf.splitPDF()
@@ -343,7 +351,7 @@ def startProcessing(x):
         print("Compute time: ", str(time.time()-start_time))
     else:
         # return pdf.records        # return records to main function, so they can be sent to an upload function to be grouped and uploaded (and returned if failed)
-        if pdf.orderNumber != None:
+        if pdf.orderNumber != None and len(pdf.records['records']) != 0:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
             if upload == "Success":
                 moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
@@ -353,6 +361,9 @@ def startProcessing(x):
                 moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored") 
             print("Compute time: ", str(time.time()-start_time))
             return True
+        else:
+            moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored")
+            appendToDebugLog("Could not process file.", FileName=pdf.fileName, FileType=pdf.fileType, Records=pdf.records)
 
 def getPDFsInFolder(folderLocation):
     filesInFolder = []
