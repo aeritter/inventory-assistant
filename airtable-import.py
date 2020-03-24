@@ -6,6 +6,7 @@ from pathlib import Path
 # from airtableconnector import airtable
 
 debug = True
+maxSleepTime = 600 #in seconds
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
@@ -62,13 +63,19 @@ class document(object):
         self.location = fileParentFolder
         self.orderNumber = None
         self.fileText = self.getPDFText(fileName)
-        self.fileType = self.determineFileType()
+        self.fileType = "Unknown"
+        self.determineFileType()
         self.sendType = ''
-        self.containsMultipleInvoices = self.checkIfMultipleInvoices(self.fileText)
+        self.containsMultipleInvoices = False
         self.inDebugFolder = False
-        if self.fileType == "Supplement":
+        if self.fileType == "Unknown":
+            moveToFolder(self.location, self.fileName, pdfFolderLocation+"Errored")
+            appendToDebugLog("File type unknown.", fileName = self.fileName)
+        elif self.fileType == "Supplement":
             moveToFolder(self.location, self.fileName, pdfFolderLocation+"Suspended") #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
-        elif self.containsMultipleInvoices == False:
+        elif self.checkIfMultipleInvoices(self.fileText) == True:
+            self.containsMultipleInvoices = True
+        else:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
 
@@ -94,22 +101,23 @@ class document(object):
         return fileText
 
     def determineFileType(self):
-        line1 = self.fileText.split('\n', 1)[0]                 # first line of .txt file
-        line2 = self.fileText.split('\n', 2)[1]                 # second line of .txt file
-        line5 = self.fileText.split('\n', 5)[4]                 # 5th line
-        if "Welcome to Volvo" in line1:
-            self.fileType = "Volvo"
-        elif "GSO:" in line2:
-            self.fileType = "Mack"
-        elif "SUPPLEMENT" in line5:
-            self.fileType = "Supplement"
-        elif "MACK TRUCKS, INC." in line1:
-            self.fileType = "MackInvoice"
-        elif "PAGE  1" in line1 or "PAGE 1" in line1:
-            self.fileType = "VolvoInvoice"
-        else:
-            print("Unknown format.")
-            self.fileType = "Unknown"
+        if self.fileText.count('\n') > 5:
+            line1 = self.fileText.split('\n', 1)[0]                 # first line of .txt file
+            line2 = self.fileText.split('\n', 2)[1]                 # second line of .txt file
+            line5 = self.fileText.split('\n', 5)[4]                 # 5th line
+            if "Welcome to Volvo" in line1:
+                self.fileType = "Volvo"
+            elif "GSO:" in line2:
+                self.fileType = "Mack"
+            elif "SUPPLEMENT" in line5:
+                self.fileType = "Supplement"
+            elif "MACK TRUCKS, INC." in line1:
+                self.fileType = "MackInvoice"
+            elif "PAGE  1" in line1 or "PAGE 1" in line1:
+                self.fileType = "VolvoInvoice"
+        # else:
+        #     print("Unknown format.")
+        #     self.fileType = "Unknown"
 
         return self.fileType
 
@@ -340,7 +348,7 @@ def startProcessing(x):
     start_time = time.time()
     pdf = document(pdfFileLocation, pdfFile)
     
-    print(pdf.orderNumber, pdf.records)
+    # print(pdf.orderNumber, pdf.records)
 
     if pdf.containsMultipleInvoices == True:
         pdf.splitPDF()
@@ -413,10 +421,10 @@ class initialize():
                     else:
                         appendToDebugLog('Error with conversionlists.py, moving files to Suspended folder!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
                 time.sleep(sleeptime)       # wait a bit, then check again. If not, increase time to wait (exponential backoff) and check again.
-                if sleeptime == 3600:
+                if sleeptime == maxSleepTime:
                     pass
-                elif sleeptime > 3600:
-                    sleeptime = 3600
+                elif sleeptime > maxSleepTime:
+                    sleeptime = maxSleepTime
                 else:
                     sleeptime *= 1.2
     
