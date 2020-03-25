@@ -137,7 +137,7 @@ class document(object):
             self.inDebugFolder = True
             writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
-            appendToDebugLog("Debug ran.",FileName=self.fileName, FileType=self.fileType)
+            appendToDebugLog("Debug ran. ",FileName=self.fileName, FileType=self.fileType)
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
@@ -155,15 +155,25 @@ class document(object):
                 loc = var.dealerCodes[fieldEntries['Dealer Code']]
                 fieldEntries.update({"Location":loc})
         fieldEntries["Make"] = self.make
-        fieldEntries["Status Paste"] = self.status
         if 'Order Number' in fieldEntries:
             self.orderNumber = fieldEntries['Order Number']
-            id = getRecordID(fieldEntries['Order Number'])
-            if id != None:
-                fields[0].update({"id":id})
-                self.sendType = "Update"
-            else:
+            record = getRecord(fieldEntries['Order Number'])
+            print(record)
+            if record == None:
                 self.sendType = "Post"
+                fieldEntries["Status Paste"] = self.status
+            else:
+                self.sendType = "Update"
+                fields[0].update({"id":record['id']})
+                statusP = record['fields']['Status Paste']
+                if statusP == 'on order':
+                    fieldEntries["Status Paste"] = self.status
+                elif statusP == 'in stock' and self.status != 'on order':
+                    fieldEntries["Status Paste"] = self.status
+                elif statusP == 'on order - sold' or statusP == 'in stock - sold' or statusP == 'DEMO':
+                    pass
+
+            
 
             OrderOrInvoice = ''
             if self.status == "on order":                  # Order means the truck has been ordered but is not yet available (O)
@@ -308,11 +318,11 @@ def loadAirtableRecordsCache():
         x = str(cache.read())
     return json.loads(x)
 
-def getRecordID(orderNumber):
+def getRecord(orderNumber):
     ListOfAirtableRecords = loadAirtableRecordsCache()
     for x in ListOfAirtableRecords:
         if "Order Number" in x['fields'] and x['fields']['Order Number'] == orderNumber:
-            return x['id']
+            return x
 
 
 def appendToDebugLog(errormsg, **kwargs):
