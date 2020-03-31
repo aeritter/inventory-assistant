@@ -8,7 +8,7 @@ from pathlib import Path
 
 debug = True
 maxSleepTime = 600 #in seconds
-readDirTimeout = 5000 #in milliseconds, timeout between folder checks when no files were placed
+readDirTimeout = 20*60000 #in milliseconds, timeout between folder checks when no files were placed (20 minutes)
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
@@ -358,6 +358,17 @@ def startProcessing(x):
     pdfFileLocation = x[0]
     pdfFile = x[1]
     start_time = time.time()
+    attempts = 0
+    while True:                     # Check if file can be accessed (which means it's done being written to the folder)
+        try:
+            with open(pdfFileLocation+pdfFile, 'r'):
+                break
+        except:
+            attempts += 1
+            if attempts > 120:
+                raise Exception('Could not open file after 120 attempts (over one minute)')
+            time.sleep(.5)
+
     pdf = document(pdfFileLocation, pdfFile)
     
     # print(pdf.orderNumber, pdf.records)
@@ -478,7 +489,7 @@ def main(pool):
                 hasTimedOut = False
                 result = win32file.GetOverlappedResult(directoryHandle, overlapped, True)
                 if result:
-                    bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, nbytes)
+                    bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, result)
                     #print(bits)
                     if initialize.conversionlists_Check() == False:
                         print("conversionlists_Check() failed!")
@@ -493,6 +504,7 @@ def main(pool):
                 else:
                     print('dir handle closed')
                 time.sleep(.5)
+            print('Watching for files.')
 # recordcompilation.addRecords(x for x in threads)
 # if recordcompilation.send() == False:
 #       for x in threads:
