@@ -1,4 +1,5 @@
-import re, os.path, subprocess, time, importlib, sys, win32file, win32con
+import re, os.path, subprocess, time, importlib, sys
+import win32file, win32con, win32event, pywintypes
 import json, requests, multiprocessing
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -7,6 +8,7 @@ from pathlib import Path
 
 debug = True
 maxSleepTime = 600 #in seconds
+readDirTimeout = 5000 #in milliseconds, timeout between folder checks when no files were placed
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
@@ -450,23 +452,47 @@ def main(pool):
             print("Folder check failed")
             raise Exception("Folder check failed")
         print("Waiting for files.")
+
         updateAirtableRecordsCache()
-        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME
-        dh = win32file.CreateFile(pdfFolderLocation, 0x0001, win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
+        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
+        directoryHandle = win32file.CreateFile(pdfFolderLocation, 0x0001,win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
+        overlapped = pywintypes.OVERLAPPED()
+        overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
+        buffer = win32file.AllocateReadBuffer(8192)
+
+        hasTimedOut = False
         while True:
-            changes = win32file.ReadDirectoryChangesW(dh, 8192, True, flags)
-            time.sleep(.2)
-            if initialize.conversionlists_Check() == False:
-                print("conversionlists_Check() failed!")
-                raise Exception("conversionlists_Check() failed!")
-            for x, filename in changes:
-                if x == 1 and filename[-3:] == 'pdf':
-                    fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
-                    if '\\' not in filename:
-                        pool.imap_unordered(startProcessing, [[fileloc, filename]])
-                    elif filename[:5] == 'Debug':
-                        pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
-            print("Waiting for files.")
+            if hasTimedOut == False:
+                win32file.ReadDirectoryChangesW(directoryHandle, buffer, True, flags, overlapped)
+
+            # MultipleObjects so that you can use individual folders. WaitForSingleObject/WaitForMultipleObjects will work as well.
+            # Just use WAIT_OBJECT_0 for the first overlapped.hEvent, WAIT_OBJECT_1 for the 2nd, etc.
+            rc = win32event.MsgWaitForMultipleObjects([overlapped.hEvent], False, readDirTimeout, win32event.QS_ALLEVENTS)
+            if rc == win32event.WAIT_TIMEOUT:
+                hasTimedOut = True      # apparently simply reassigning is faster than checking value and assigning if it did not match
+                print(time.ctime(),' Wait timeout.')
+                for x in os.listdir(pdfFolderLocation):
+                    if str(x)[-3:] == 'pdf':
+                        pool.imap_unordered(startProcessing, [[pdfFolderLocation, x.replace(pdfFolderLocation, '')]])
+            elif rc == win32event.WAIT_OBJECT_0:
+                hasTimedOut = False
+                result = win32file.GetOverlappedResult(directoryHandle, overlapped, True)
+                if result:
+                    bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, nbytes)
+                    #print(bits)
+                    if initialize.conversionlists_Check() == False:
+                        print("conversionlists_Check() failed!")
+                        raise Exception("conversionlists_Check() failed!")
+                    for x, filename in bufferData:
+                        if x == 1 and filename[-3:] == 'pdf':
+                            fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
+                            if '\\' not in filename:
+                                pool.imap_unordered(startProcessing, [[fileloc, filename]])
+                            elif filename[:5] == 'Debug':
+                                pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
+                else:
+                    print('dir handle closed')
+                time.sleep(.5)
 # recordcompilation.addRecords(x for x in threads)
 # if recordcompilation.send() == False:
 #       for x in threads:
