@@ -19,11 +19,14 @@ pdftotextExecutable = settingsFolder+"pdftotext.exe"
 with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
     api_key = key.read()
 
-with open(settingsFolder+'url.txt', 'r') as url:                    # Location of .txt file containing URL for the table in Airtable 
-    url = url.read()                                                #   (found in api.airtable.com, not the same as the URL you see when browsing)
+with open(settingsFolder+'airtable_url.txt', 'r') as url:                    # Location of .txt file containing URL for the table in Airtable 
+    airtableURL = url.read()                                                #   (found in api.airtable.com, not the same as the URL you see when browsing)
 
 with open(settingsFolder+'url_fields.txt', 'r') as urlFields:       # Location of .txt file containing the part appended to the URL for getting specific fields
     urlFields = urlFields.read()
+
+with open(settingsFolder+'slack_url.txt', 'r') as url:
+    slackURL = url.read()
 
 sys.path.append(settingsFolder)                                     # Give script a path to find conversionlists.py
 
@@ -281,9 +284,9 @@ def writefile(string, filepath, extension):                 # write file for deb
 
 def postOrUpdate(content, sendType):
     if sendType == "Post":
-        return requests.post(url,data=None,json=content,headers=AirtableAPIHeaders)
+        return requests.post(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
     elif sendType == "Update":
-        return requests.patch(url,data=None,json=content,headers=AirtableAPIHeaders)
+        return requests.patch(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
 
 
 def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
@@ -299,9 +302,9 @@ def retrieveRecordsFromAirtable(offset=None):
     while True:
         try:
             if offset == None:
-                x = requests.get(url+urlFields, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(airtableURL+urlFields, data=None, headers=AirtableAPIHeaders)
             else:
-                x = requests.get(url+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(airtableURL+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
 
             records = x.json()['records']
             if 'offset' in json.loads(x.text):
@@ -329,12 +332,17 @@ def getRecord(orderNumber):
 
 def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
+    errordata = str(" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
     try:
         a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
-        a.write("\n"+str(time.ctime())+" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+        a.write("\n"+str(time.ctime())+errordata)
         a.close()
     except:
         print("Can't append to debug log file.")
+    try:
+        requests.post(slackURL,json={'text':errordata},headers={'Content-type':'application/json'})
+    except:
+        print("Could not post to Slack!")
 
 
 def moveToFolder(oldFolder, oldName, newFolder, newName=None):
