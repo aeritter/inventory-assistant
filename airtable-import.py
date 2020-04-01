@@ -1,20 +1,22 @@
 import re, os.path, subprocess, time, importlib, sys
 import win32file, win32con, win32event, pywintypes
-import json, requests, multiprocessing
+import json, requests, multiprocessing, configparser
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
 from pathlib import Path
 # from airtableconnector import airtable
 
-debug = True
-maxSleepTime = 600 #in seconds
-readDirTimeout = 20*60000 #in milliseconds, timeout between folder checks when no files were placed (20 minutes)
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
     pdfFolderLocation = pdffolder.read()
 settingsFolder = pdfFolderLocation+"Settings/"
 pdftotextExecutable = settingsFolder+"pdftotext.exe"
+
+
+debug = True
+maxSleepTime = 600 #in seconds
+readDirTimeout = 20*60000 #in milliseconds, timeout between folder checks when no files were placed (20 minutes)
 
 with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
     api_key = key.read()
