@@ -1,5 +1,5 @@
 import re, os.path, subprocess, time, importlib, sys
-import win32file, win32con, win32event, pywintypes
+import win32file, win32con, win32event, win32net, pywintypes
 import json, requests, multiprocessing, configparser
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
@@ -8,32 +8,42 @@ from pathlib import Path
 
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
-with open(mainFolder+'pdf_folder_location.txt') as pdffolder:
-    pdfFolderLocation = pdffolder.read()
-settingsFolder = pdfFolderLocation+"Settings/"
-pdftotextExecutable = settingsFolder+"pdftotext.exe"
+config = configparser.ConfigParser()
+config.read(mainFolder+'settings.ini')
 
 
-debug = True
-maxSleepTime = 600 #in seconds
-readDirTimeout = 20*60000 #in milliseconds, timeout between folder checks when no files were placed (20 minutes)
+pdfFolderLocation = config['Paths']['pdf_folder']
+if pdfFolderLocation[:2] == '//' or pdfFolderLocation[:2] == '\\\\':
+    netdata = {
+        'remote': pdfFolderLocation,
+        'local':'',
+        'username':config['NetCredentials']['username'],
+        'domainname':config['NetCredentials']['domain_name'],
+        'password':config['NetCredentials']['password']
+    }
+    win32net.NetUseAdd(None, 2, netdata)
 
-with open(settingsFolder+'api_key.txt', 'r') as key:                # Location of .txt file containing API token
-    api_key = key.read()
+DebugFolder = config['Paths']['debug_folder']
+ErroredFolder = config['Paths']['errored_folder']
+SettingsFolder = config['Paths']['settings_folder']
+SuspendedFolder = config['Paths']['suspended_folder']
+UnsplitTRKINVFolder = config['Paths']['unsplit_trkinv_folder']
+pdftotextExecutable = SettingsFolder+"/pdftotext.exe"
 
-with open(settingsFolder+'airtable_url.txt', 'r') as url:                    # Location of .txt file containing URL for the table in Airtable 
-    airtableURL = url.read()                                                #   (found in api.airtable.com, not the same as the URL you see when browsing)
+airtableURL = config['Other']['airtable_url']
+slackURL = config['Other']['slack_url']
+airtableURLFields = config['Other']['airtable_url_fields']
+airtableAPIKey = config['Other']['airtable_api_key']
+maxSleepTime = int(config['Other']['max_sleep_time'])
+readDirTimeout = int(config['Other']['read_dir_timeout'])*1000     # *1000 to convert milliseconds to seconds
+debug = config['Other'].getboolean('enable_debug')
+enableSlackPosts = config['Other'].getboolean('enable_slack_posts')
+enableSlackStatusUpdate = config['Other'].getboolean('enable_status_update')
 
-with open(settingsFolder+'url_fields.txt', 'r') as urlFields:       # Location of .txt file containing the part appended to the URL for getting specific fields
-    urlFields = urlFields.read()
-
-with open(settingsFolder+'slack_url.txt', 'r') as url:
-    slackURL = url.read()
-
-sys.path.append(settingsFolder)                                     # Give script a path to find conversionlists.py
+sys.path.append(SettingsFolder)                                     # Give script a path to find conversionlists.py
 
 AirtableAPIHeaders = {
-    "Authorization":str("Bearer "+api_key),
+    "Authorization":str("Bearer "+airtableAPIKey),
     "User-Agent":"Python Script",
     "Content-Type":"application/json"
 }
@@ -76,10 +86,10 @@ class document(object):
         self.containsMultipleInvoices = False
         self.inDebugFolder = False
         if self.fileType == "Unknown":
-            moveToFolder(self.location, self.fileName, pdfFolderLocation+"Errored")
+            moveToFolder(self.location, self.fileName, ErroredFolder)
             appendToDebugLog("File type unknown.", fileName = self.fileName)
         elif self.fileType == "Supplement":
-            moveToFolder(self.location, self.fileName, pdfFolderLocation+"Suspended") #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
+            moveToFolder(self.location, self.fileName, SuspendedFolder) #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
         elif self.checkIfMultipleInvoices(self.fileText) == True:
             self.containsMultipleInvoices = True
         else:
@@ -142,8 +152,8 @@ class document(object):
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
         if str(self.location[-6:-1]) == "Debug":
             self.inDebugFolder = True
-            writefile(RegexMatches, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-regexmatches).txt")
-            writefile(self.fileText, pdfFolderLocation+"Debug/", self.fileName[:-4]+" (debug-pdftotext).txt")
+            writefile(RegexMatches, DebugFolder, self.fileName[:-4]+" (debug-regexmatches).txt")
+            writefile(self.fileText, DebugFolder, self.fileName[:-4]+" (debug-pdftotext).txt")
             appendToDebugLog("Debug ran. ",FileName=self.fileName, FileType=self.fileType)
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
@@ -237,8 +247,8 @@ class document(object):
 
         pageCounter = 0
         pageGroupNum = 0
-        moveToFolder(pdfFolderLocation, self.fileName, pdfFolderLocation+"Unsplit TRKINV")
-        readOldFile = PDFReader(pdfFolderLocation+'Unsplit TRKINV\\'+self.fileName)
+        moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
+        readOldFile = PDFReader(UnsplitTRKINVFolder+self.fileName)
         for y, z in enumerate(pageGroups):                          # can probably be multithreaded
             newFile = PDFWriter()
             if z > 1:
@@ -304,9 +314,9 @@ def retrieveRecordsFromAirtable(offset=None):
     while True:
         try:
             if offset == None:
-                x = requests.get(airtableURL+urlFields, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(airtableURL+airtableURLFields, data=None, headers=AirtableAPIHeaders)
             else:
-                x = requests.get(airtableURL+urlFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
+                x = requests.get(airtableURL+airtableURLFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
 
             records = x.json()['records']
             if 'offset' in json.loads(x.text):
@@ -336,13 +346,14 @@ def appendToDebugLog(errormsg, **kwargs):
     print(errormsg)
     errordata = str(" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
     try:
-        a = open(pdfFolderLocation+"Debug\\Debug log.txt", "a+")
+        a = open(DebugFolder+"Debug log.txt", "a+")
         a.write("\n"+str(time.ctime())+errordata)
         a.close()
     except:
         print("Can't append to debug log file.")
     try:
-        requests.post(slackURL,json={'text':errordata},headers={'Content-type':'application/json'})
+        if enableSlackPosts == True:
+            requests.post(slackURL,json={'text':errordata},headers={'Content-type':'application/json'})
     except:
         print("Could not post to Slack!")
 
@@ -351,11 +362,11 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
     if newName == None:
         newName = oldName
     try:
-        os.rename(oldFolder+oldName, newFolder+"\\"+newName)
+        os.rename(oldFolder+oldName, newFolder+newName)
     except FileExistsError:
         print("File", newName, "exists in", newFolder, "folder.")
         try:
-            os.rename(oldFolder+oldName, newFolder+"\\Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
+            os.rename(oldFolder+oldName, newFolder+"Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
         except:
             os.remove(oldFolder+oldName)
             pass
@@ -388,22 +399,22 @@ def startProcessing(x):
         print("Compute time: ", str(time.time()-start_time))
         return None
     elif pdf.inDebugFolder == True:             # if it came from the debug folder, move to Done without uploading to Airtable
-        moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
+        moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
         print("Compute time: ", str(time.time()-start_time))
     else:
         # return pdf.records        # return records to main function, so they can be sent to an upload function to be grouped and uploaded (and returned if failed)
         if pdf.orderNumber != None and len(pdf.records['records']) != 0:
             upload = uploadDataToAirtable(pdf.records, pdf.sendType)
             if upload == "Success":
-                moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Done") 
+                moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
             else:
                 appendToDebugLog("Could not upload ", OrderNumber = pdf.orderNumber, ErrorMessage=upload['failureText'])
-                writefile("Sent data content: "+upload['content'], pdfFolderLocation+"Debug\\", pdf.fileName[:-4]+" (debug-uploadcontent).txt")
-                moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored") 
+                writefile("Sent data content: "+upload['content'], DebugFolder, pdf.fileName[:-4]+" (debug-uploadcontent).txt")
+                moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder) 
             print("Compute time: ", str(time.time()-start_time))
             return True
         else:
-            moveToFolder(pdfFileLocation, pdf.fileName, pdfFolderLocation+"Errored")
+            moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder)
             appendToDebugLog("Could not process file.", FileName=pdf.fileName, FileType=pdf.fileType, Records=pdf.records)
 
 def getPDFsInFolder(folderLocation):
