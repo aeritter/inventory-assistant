@@ -12,10 +12,10 @@ config = configparser.ConfigParser()
 config.read(mainFolder+'settings.ini')
 
 
-pdfFolderLocation = config['Paths']['pdf_folder']
+pdfFolderLocation = config['Paths']['pdf_folder']+"/"
 if pdfFolderLocation[:2] == '//' or pdfFolderLocation[:2] == '\\\\':
     netdata = {
-        'remote': pdfFolderLocation,
+        'remote': config['Paths']['pdf_folder'],
         'local':'',
         'username':config['NetCredentials']['username'],
         'domainname':config['NetCredentials']['domain_name'],
@@ -24,6 +24,7 @@ if pdfFolderLocation[:2] == '//' or pdfFolderLocation[:2] == '\\\\':
     win32net.NetUseAdd(None, 2, netdata)
 
 DebugFolder = config['Paths']['debug_folder']
+DoneFolder = config['Paths']['done_folder']
 ErroredFolder = config['Paths']['errored_folder']
 SettingsFolder = config['Paths']['settings_folder']
 SuspendedFolder = config['Paths']['suspended_folder']
@@ -492,8 +493,20 @@ def main(pool):
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         buffer = win32file.AllocateReadBuffer(8192)
 
+        daysWorking = 0
+        madeDailyCheckIn = False
         hasTimedOut = False
         while True:
+            if time.localtime().tm_hour == 7:
+                if madeDailyCheckIn == False:
+                    madeDailyCheckIn = True
+                    daysWorking += 1
+                    if enableSlackPosts == True:
+                        requests.post(slackURL,json={'text':"I'm still working as of {}.".format(time.strftime("%a, %b %d"))+str("{} day{} in a row.".format(daysWorking,'s' if daysWorking != 1 else '') if daysWorking > 0 else '')},headers={'Content-type':'application/json'})
+            elif time.localtime().tm_hour == 6:
+                if madeDailyCheckIn == True:
+                    madeDailyCheckIn = False
+
             if hasTimedOut == False:
                 win32file.ReadDirectoryChangesW(directoryHandle, buffer, True, flags, overlapped)
 
