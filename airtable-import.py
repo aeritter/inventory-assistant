@@ -38,8 +38,11 @@ airtableAPIKey = config['Other']['airtable_api_key']
 maxSleepTime = int(config['Other']['max_sleep_time'])
 readDirTimeout = int(config['Other']['read_dir_timeout'])*1000     # *1000 to convert milliseconds to seconds
 debug = config['Other'].getboolean('enable_debug')
+enableAirtablePosts = config['Other'].getboolean('enable_airtable_posts')
 enableSlackPosts = config['Other'].getboolean('enable_slack_posts')
 enableSlackStatusUpdate = config['Other'].getboolean('enable_status_update')
+CheckinHour = int(float(config['Other']['check-in_hour'])*60*60)
+TimeBetweenCheckins = float(config['Other']['time_between_check-ins_in_minutes'])*60*10000000 #converted to 100 nanoseconds for the function
 
 sys.path.append(SettingsFolder)                                     # Give script a path to find conversionlists.py
 
@@ -303,6 +306,8 @@ def postOrUpdate(content, sendType):
 
 
 def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
+    if enableAirtablePosts != True:
+        return "Airtable connection disabled."
     x = postOrUpdate(content, sendType)
     print("\nPost HTTP code:", x.status_code, "  |   Send type:",sendType)
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
@@ -314,6 +319,8 @@ def uploadDataToAirtable(content, sendType):                 # uploads the data 
 def retrieveRecordsFromAirtable(offset=None):
     while True:
         try:
+            if enableAirtablePosts != True:
+                return "Airtable connection disabled."
             if offset == None:
                 x = requests.get(airtableURL+airtableURLFields, data=None, headers=AirtableAPIHeaders)
             else:
@@ -462,9 +469,9 @@ class initialize():
             else:
                 if sleeptime == 10 or sleeptime == 3600:         # reduce number of entries appended to log file
                     if type(conversionlistsCheck) == SyntaxError:
-                        appendToDebugLog("Error in conversionlists.py, moving files to Suspended folder! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
+                        appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
                     else:
-                        appendToDebugLog('Error with conversionlists.py, moving files to Suspended folder!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
+                        appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
                 time.sleep(sleeptime)       # wait a bit, then check again. If not, increase time to wait (exponential backoff) and check again.
                 if sleeptime == maxSleepTime:
                     pass
@@ -487,38 +494,29 @@ def main(pool):
         print("Waiting for files.")
 
         updateAirtableRecordsCache()
-        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
+        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES
         directoryHandle = win32file.CreateFile(pdfFolderLocation, 0x0001,win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
+        startTime = time.localtime()
+        initialCheckinTimeConverted = int(float((86400-(startTime.tm_hour*60*60+startTime.tm_min*60+startTime.tm_sec)+CheckinHour)*10000000))
+        timerHandle = win32event.CreateWaitableTimer(None, True, None)
+        win32event.SetWaitableTimer(timerHandle, int(0-initialCheckinTimeConverted), 0, None, None, True)
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         buffer = win32file.AllocateReadBuffer(8192)
 
-        daysWorking = 0
-        madeDailyCheckIn = False
         hasTimedOut = False
         while True:
-            if time.localtime().tm_hour == 7:
-                if madeDailyCheckIn == False:
-                    madeDailyCheckIn = True
-                    daysWorking += 1
-                    if enableSlackPosts == True:
-                        requests.post(slackURL,json={'text':"I'm still working as of {}.".format(time.strftime("%a, %b %d"))+str("{} day{} in a row.".format(daysWorking,'s' if daysWorking != 1 else '') if daysWorking > 0 else '')},headers={'Content-type':'application/json'})
-            elif time.localtime().tm_hour == 6:
-                if madeDailyCheckIn == True:
-                    madeDailyCheckIn = False
 
             if hasTimedOut == False:
                 win32file.ReadDirectoryChangesW(directoryHandle, buffer, True, flags, overlapped)
 
             # MultipleObjects so that you can use individual folders. WaitForSingleObject/WaitForMultipleObjects will work as well.
-            # Just use WAIT_OBJECT_0 for the first overlapped.hEvent, WAIT_OBJECT_1 for the 2nd, etc.
-            rc = win32event.MsgWaitForMultipleObjects([overlapped.hEvent], False, readDirTimeout, win32event.QS_ALLEVENTS)
+            # Just use WAIT_OBJECT_0 for the first overlapped.hEvent, WAIT_OBJECT_0+1 for the 2nd, 0+2 for the 3rd, etc.
+            rc = win32event.MsgWaitForMultipleObjects([overlapped.hEvent, timerHandle], False, readDirTimeout, win32event.QS_ALLEVENTS)
             if rc == win32event.WAIT_TIMEOUT:
                 hasTimedOut = True      # apparently simply reassigning is faster than checking value and assigning if it did not match
                 print(time.ctime(),' Wait timeout.')
-                for x in os.listdir(pdfFolderLocation):
-                    if str(x)[-3:] == 'pdf':
-                        pool.imap_unordered(startProcessing, [[pdfFolderLocation, x.replace(pdfFolderLocation, '')]])
+                pool.imap_unordered(startProcessing, getPDFsInFolder(pdfFolderLocation))
             elif rc == win32event.WAIT_OBJECT_0:
                 hasTimedOut = False
                 result = win32file.GetOverlappedResult(directoryHandle, overlapped, True)
@@ -537,7 +535,12 @@ def main(pool):
                                 pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
                 else:
                     print('dir handle closed')
-                time.sleep(.5)
+            elif rc == win32event.WAIT_OBJECT_0+1:
+                win32event.SetWaitableTimer(timerHandle, int(0-TimeBetweenCheckins), 0, None, None, True)    # sets of 100 nanoseconds. -10,000,000 = 1 second
+                print("Checking in!")
+                if enableSlackPosts == True:
+                    requests.post(slackURL,json={'text':"{}: Checking-in.".format(time.strftime("%a, %b %d"))},headers={'Content-type':'application/json'})
+
             print('Watching for files.')
 # recordcompilation.addRecords(x for x in threads)
 # if recordcompilation.send() == False:

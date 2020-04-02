@@ -26,7 +26,7 @@ def main():
         if rc == win32event.WAIT_TIMEOUT:
             timedout = True
             print('timed out')
-        if rc == win32event.WAIT_OBJECT_0:
+        if rc == win32event.WAIT_OBJECT_0:      # can replace win32event.WAIT_OBJECT_0 with the integer 0 (and win32event.WAIT_OBJECT_0+1 with 1)
             timedout = False        # since we got a result, reset the timedout variable so ReadDirectoryChangesW can be run again
             result = win32file.GetOverlappedResult(dh, overlapped, True)
             if result:
