@@ -35,7 +35,6 @@ airtableURL = config['Other']['airtable_url']
 slackURL = config['Other']['slack_url']
 airtableURLFields = config['Other']['airtable_url_fields']
 airtableAPIKey = config['Other']['airtable_api_key']
-maxSleepTime = int(config['Other']['max_sleep_time'])
 readDirTimeout = int(config['Other']['read_dir_timeout'])*1000     # *1000 to convert milliseconds to seconds
 debug = config['Other'].getboolean('enable_debug')
 enableAirtablePosts = config['Other'].getboolean('enable_airtable_posts')
@@ -458,27 +457,6 @@ class initialize():
         except Exception as exc:
             print("Folder_Check() failed: ",exc.args)
             return False
-
-    @staticmethod
-    def conversionlists_Check():
-        sleeptime = 10
-        while True:
-            conversionlistsCheck = var.update()
-            if conversionlistsCheck == True:
-                return True
-            else:
-                if sleeptime == 10 or sleeptime == 3600:         # reduce number of entries appended to log file
-                    if type(conversionlistsCheck) == SyntaxError:
-                        appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
-                    else:
-                        appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
-                time.sleep(sleeptime)       # wait a bit, then check again. If not, increase time to wait (exponential backoff) and check again.
-                if sleeptime == maxSleepTime:
-                    pass
-                elif sleeptime > maxSleepTime:
-                    sleeptime = maxSleepTime
-                else:
-                    sleeptime *= 1.2
     
     @staticmethod
     def pdftotext_Check():
@@ -494,7 +472,7 @@ def main(pool):
         print("Waiting for files.")
 
         updateAirtableRecordsCache()
-        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES
+        flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
         directoryHandle = win32file.CreateFile(pdfFolderLocation, 0x0001,win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
         startTime = time.localtime()
         initialCheckinTimeConverted = int(float((86400-(startTime.tm_hour*60*60+startTime.tm_min*60+startTime.tm_sec)+CheckinHour)*10000000))
@@ -504,6 +482,8 @@ def main(pool):
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         buffer = win32file.AllocateReadBuffer(8192)
 
+        lastCheckTime = 0
+        conversionlistsOK = True
         hasTimedOut = False
         while True:
 
@@ -523,10 +503,23 @@ def main(pool):
                 if result:
                     bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, result)
                     #print(bits)
-                    if initialize.conversionlists_Check() == False:
-                        print("conversionlists_Check() failed!")
-                        raise Exception("conversionlists_Check() failed!")
                     for x, filename in bufferData:
+                        print(filename)
+                        if 'conversionlists.py' in filename:
+                            if time.time() - lastCheckTime < .5:
+                                break
+                            lastCheckTime = time.time()
+                            conversionlistsCheck = var.update()
+                            if conversionlistsCheck == True:
+                                conversionlistsOK = True
+                                print("conversionlists.py working.")
+                            elif type(conversionlistsCheck) == SyntaxError:
+                                conversionlistsOK = False
+                                appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
+                                break
+                            else:
+                                appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
+                                break
                         if x == 1 and filename[-3:] == 'pdf':
                             fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
                             if '\\' not in filename:
