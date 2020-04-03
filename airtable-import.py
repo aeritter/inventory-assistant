@@ -383,6 +383,8 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
         pass
 
 def startProcessing(x):
+    if len(x) == 0:
+        return "No files to process."
     pdfFileLocation = x[0]
     pdfFile = x[1]
     start_time = time.time()
@@ -497,6 +499,7 @@ def main(pool):
                 hasTimedOut = True      # apparently simply reassigning is faster than checking value and assigning if it did not match
                 print(time.ctime(),' Wait timeout.')
                 pool.imap_unordered(startProcessing, getPDFsInFolder(pdfFolderLocation))
+
             elif rc == win32event.WAIT_OBJECT_0:
                 hasTimedOut = False
                 result = win32file.GetOverlappedResult(directoryHandle, overlapped, True)
@@ -513,6 +516,7 @@ def main(pool):
                             if conversionlistsCheck == True:
                                 conversionlistsOK = True
                                 print("conversionlists.py working.")
+                                pool.imap_unordered(startProcessing, getPDFsInFolder(pdfFolderLocation))
                             elif type(conversionlistsCheck) == SyntaxError:
                                 conversionlistsOK = False
                                 appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
@@ -520,7 +524,7 @@ def main(pool):
                             else:
                                 appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
                                 break
-                        if x == 1 and filename[-3:] == 'pdf':
+                        if conversionlistsOK = True and x == 1 and filename[-3:] == 'pdf':
                             fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
                             if '\\' not in filename:
                                 pool.imap_unordered(startProcessing, [[fileloc, filename]])
