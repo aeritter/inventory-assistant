@@ -524,7 +524,7 @@ def main(pool):
                             else:
                                 appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
                                 break
-                        if conversionlistsOK = True and x == 1 and filename[-3:] == 'pdf':
+                        if conversionlistsOK == True and x == 1 and filename[-3:] == 'pdf':
                             fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
                             if '\\' not in filename:
                                 pool.imap_unordered(startProcessing, [[fileloc, filename]])
@@ -538,7 +538,7 @@ def main(pool):
                 if enableSlackPosts == True:
                     requests.post(slackURL,json={'text':"{}: Checking-in.".format(time.strftime("%a, %b %d"))},headers={'Content-type':'application/json'})
 
-            print('Watching for files.')
+            print('Watching for files.', end='\r')
 # recordcompilation.addRecords(x for x in threads)
 # if recordcompilation.send() == False:
 #       for x in threads:
