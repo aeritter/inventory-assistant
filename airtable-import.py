@@ -59,6 +59,7 @@ class convlists(object):
         self.update()
     def update(self):
         try:
+            time.sleep(1)
             import conversionlists
             importlib.reload(conversionlists)
             from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
@@ -350,11 +351,11 @@ def getRecord(orderNumber):
 
 
 def appendToDebugLog(errormsg,**kwargs):
-    errordata = str(errormsg + "\n"+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+    errordata = str(errormsg + "\n"+'\n'.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items())+'\n')
     print(errordata)
     try:
         a = open(DebugFolder+"Debug log.txt", "a+")
-        a.write("\n"+str(time.ctime())+errordata)
+        a.write("\n"+str(time.ctime())+' '+errordata)
         a.close()
     except:
         print("Can't append to debug log file.")
@@ -507,7 +508,7 @@ def main(pool):
                     bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, result)
                     #print(bits)
                     for x, filename in bufferData:
-                        print(filename)
+                        print('Change found: '+filename)
                         if 'conversionlists.py' in filename:
                             if time.time() - lastCheckTime < .5:
                                 break
@@ -531,10 +532,10 @@ def main(pool):
                             elif filename[:5] == 'Debug':
                                 pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
                 else:
-                    print('dir handle closed')
+                    print('dir handle closed  ')
             elif rc == win32event.WAIT_OBJECT_0+1:
                 win32event.SetWaitableTimer(timerHandle, int(0-TimeBetweenCheckins), 0, None, None, True)    # sets of 100 nanoseconds. -10,000,000 = 1 second
-                print("Checking in!")
+                print("Checking in!       ")
                 if enableSlackPosts == True:
                     requests.post(slackURL,json={'text':"{}: Checking-in.".format(time.strftime("%a, %b %d"))},headers={'Content-type':'application/json'})
 
