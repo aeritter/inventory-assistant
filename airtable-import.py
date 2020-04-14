@@ -90,7 +90,7 @@ class document(object):
         self.inDebugFolder = False
         if self.fileType == "Unknown":
             moveToFolder(self.location, self.fileName, ErroredFolder)
-            appendToDebugLog("File type unknown.", fileName = self.fileName)
+            appendToDebugLog("File type unknown. ", **{"File Name":self.fileName})
         elif self.fileType == "Supplement":
             moveToFolder(self.location, self.fileName, SuspendedFolder) #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
         elif self.checkIfMultipleInvoices(self.fileText) == True:
@@ -157,7 +157,7 @@ class document(object):
             self.inDebugFolder = True
             writefile(RegexMatches, DebugFolder, self.fileName[:-4]+" (debug-regexmatches).txt")
             writefile(self.fileText, DebugFolder, self.fileName[:-4]+" (debug-pdftotext).txt")
-            appendToDebugLog("Debug ran. ",FileName=self.fileName, FileType=self.fileType)
+            appendToDebugLog("Debug ran. ",**{"File Name":self.fileName, "File Type":self.fileType})
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
@@ -206,7 +206,7 @@ class document(object):
             return fields
 
         else:
-            appendToDebugLog("Could not find order number", file=self.fileName)
+            appendToDebugLog("Could not find order number. ", **{"File Name":self.fileName})
 
 
     def splitPDF(self):
@@ -349,9 +349,9 @@ def getRecord(orderNumber):
             return x
 
 
-def appendToDebugLog(errormsg, **kwargs):
-    print(errormsg)
-    errordata = str(" Error: "+errormsg+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+def appendToDebugLog(errormsg,**kwargs):
+    errordata = str(errormsg + "\n"+', '.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+    print(errordata)
     try:
         a = open(DebugFolder+"Debug log.txt", "a+")
         a.write("\n"+str(time.ctime())+errordata)
@@ -417,14 +417,14 @@ def startProcessing(x):
             if upload == "Success":
                 moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
             else:
-                appendToDebugLog("Could not upload ", OrderNumber = pdf.orderNumber, ErrorMessage=upload['failureText'])
+                appendToDebugLog("Could not upload to Airtable. ", **{"Order Number":pdf.orderNumber, "Error Message":upload['failureText']})
                 writefile("Sent data content: "+upload['content'], DebugFolder, pdf.fileName[:-4]+" (debug-uploadcontent).txt")
                 moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder) 
             print("Compute time: ", str(time.time()-start_time))
             return True
         else:
             moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder)
-            appendToDebugLog("Could not process file.", FileName=pdf.fileName, FileType=pdf.fileType, Records=pdf.records)
+            appendToDebugLog("Could not process file.", **{"File Name":pdf.fileName, "File Type":pdf.fileType, "Records":pdf.records})
 
 def getPDFsInFolder(folderLocation):
     filesInFolder = []
@@ -522,7 +522,7 @@ def main(pool):
                                 appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
                                 break
                             else:
-                                appendToDebugLog('Error with conversionlists.py!', ExceptionType=type(conversionlistsCheck), Details=conversionlistsCheck.args)
+                                appendToDebugLog('Error with conversionlists.py!', **{"Exception Type":type(conversionlistsCheck), "Details":conversionlistsCheck.args})
                                 break
                         if conversionlistsOK == True and x == 1 and filename[-3:] == 'pdf':
                             fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
