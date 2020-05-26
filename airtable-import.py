@@ -83,6 +83,7 @@ class document(object):
         self.fileName = fileName
         self.location = fileParentFolder
         self.orderNumber = None
+        self.numberOfPages = PDFReader(self.location+self.fileName).getNumPages()
         self.fileText = self.getPDFText(fileName)
         self.fileType = "Unknown"
         self.determineFileType()
@@ -94,8 +95,9 @@ class document(object):
             appendToDebugLog("File type unknown. ", **{"File Name":self.fileName})
         elif self.fileType == "Supplement":
             moveToFolder(self.location, self.fileName, SuspendedFolder) #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
-        elif self.checkIfMultipleInvoices(self.fileText) == True:
+        elif self.checkIfSplitRequired(self.fileText) == True:
             self.containsMultipleInvoices = True
+            print("Multiple invoices!")
         else:
             self.loadVariables()
             self.records = {"records":self.getRecords()}
@@ -130,7 +132,7 @@ class document(object):
                 self.fileType = "Volvo"
             elif "GSO:" in line2:
                 self.fileType = "Mack"
-            elif "SUPPLEMENT" in line5:
+            elif "SUPPLEMENT" in line5 and self.numberOfPages == 1:
                 self.fileType = "Supplement"
             elif "MACK TRUCKS, INC." in line1:
                 self.fileType = "MackInvoice"
@@ -142,8 +144,9 @@ class document(object):
 
         return self.fileType
 
-    def checkIfMultipleInvoices(self, fileText):
-        if len(re.findall(r'Order Number', self.fileText)) > 1 or len(re.findall(r'PAGE {,2}3', self.fileText)) > 1: # if it contains 'Order Number' or 'PAGE 3' more than once, it probably contains multiple documents
+    def checkIfSplitRequired(self, fileText):
+        if len(re.findall(r'Order Number', self.fileText)) > 1 or len(re.findall(r'PAGE {,2}1\D', self.fileText)) > 1 or len(re.findall(r'SUPPLEMENT\n|CONCESSION\n',self.fileText)) > 1: # if it contains 'Order Number' or 'PAGE 1' more than once, it probably contains multiple documents
+            print(re.findall(r'SUPPLEMENT\n|CONCESSION\n',self.fileText))
             return True
         else:
             return False
@@ -209,61 +212,56 @@ class document(object):
         else:
             appendToDebugLog("Could not find order number. ", **{"File Name":self.fileName})
 
-
     def splitPDF(self):
-        pageGroups = []
-        orderNumbers = []
-        if self.fileType == "MackInvoice":
-            y = 0
-            allmatches = re.findall(r'(?:(Invoice Date)|(Date Printed:)|(Order Number).*?(\d{8}))', self.fileText, flags=re.S)
-            for x, page in enumerate(allmatches):
-                if x+1 < len(allmatches):
-                    if allmatches[x+1][2] != "Order Number":
-                        y += 1
-                    elif x != 0:
-                        pageGroups.append(y)
-                        y = 0                       #for multithreading, remove this reset and pass the page numbers directly
-                else:                               # [7,7,7] becomes [7,14,21], and then you would pass [[0,7][8,14][15,21]]
-                    y += 1
-                    pageGroups.append(y)
-            for x in allmatches:
-                if x[3] != '':
-                    orderNumbers.append(x[3])
-
-        elif self.fileType == "VolvoInvoice":
-            y = 1
-            allmatches = re.findall(r'PAGE {,2}(\d+)', self.fileText, flags=re.S)
-            for x, page in enumerate(allmatches):                  # iterate through page numbers
-                if x+1 < len(allmatches):
-                    if int(page) == 1 and int(allmatches[x+1]) == int(page):
-                        y+=1
-                    elif int(page) != 1:                                   # if current page number is higher than last seen page number, continue
-                        y += 1
-                    elif x != 0:
-                        pageGroups.append(y)                                # otherwise, add to list and reset counter
-                        y = 1
+        lastPageNum = 0
+        mostRecentGroup = ''
+        pageGroups = {}
+        doc = PDFReader(self.location+self.fileName)
+        for x in doc.pages:
+            text = x.extractText()
+            pageNum = re.search(r'PAGE {,2}(\d+)', text)
+            sup = None
+            first6Lines = ''.join(x for x in text.split('\n')[:6])
+            if "SUPPLEMENT" in first6Lines:
+                sup = 'Supplement'
+            elif "CONCESSION" in first6Lines:
+                sup = 'Concession'
+            if sup != None:
+                invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                supplementLocation = SuspendedFolder+sup+' - '+invoiceNumber+'.pdf'
+                if Path(supplementLocation).exists():
+                    olddata = PDFReader(supplementLocation)
+                    with open(supplementLocation, 'wb') as updatedPDF:
+                        newFile = PDFWriter()
+                        newFile.appendPagesFromReader(olddata)
+                        newFile.addPage(x)
+                        newFile.write(updatedPDF)
                 else:
-                    y += 1
-                    pageGroups.append(y)
-            volvmatches = re.findall(r'PAGE {,2}2.*?SERIAL NBR: (\S{6})', self.fileText, flags=re.S)
-            for x in volvmatches:
-                orderNumbers.append(x)
-
-        pageCounter = 0
-        pageGroupNum = 0
+                    with open(supplementLocation, 'wb') as updatedPDF:
+                        newFile = PDFWriter()
+                        newFile.addPage(x)
+                        newFile.write(updatedPDF)
+            elif pageNum != None:
+                if int(pageNum.group(1)) > lastPageNum:
+                    if int(pageNum.group(1)) == 1:
+                        invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                        pageGroups[invoiceNumber] = [x]
+                        mostRecentGroup = invoiceNumber
+                    else:
+                        pageGroups[mostRecentGroup].append(x)
+                    lastPageNum += 1
+                else:
+                    invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                    pageGroups[invoiceNumber] = [x]
+                    mostRecentGroup = invoiceNumber
+                    lastPageNum = 1
+        for x in pageGroups:
+            with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
+                newFile = PDFWriter()
+                for y in pageGroups[x]:
+                    newFile.addPage(y)
+                newFile.write(newInvoice)
         moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
-        readOldFile = PDFReader(UnsplitTRKINVFolder+self.fileName)
-        for y, z in enumerate(pageGroups):                          # can probably be multithreaded
-            newFile = PDFWriter()
-            if z > 1:
-                for x in range(0, z):
-                    newFile.addPage(readOldFile.getPage(pageCounter))
-                    pageCounter += 1
-                with open(pdfFolderLocation+'Invoice - '+orderNumbers[pageGroupNum]+'.pdf', 'wb') as newpdf:
-                    newFile.write(newpdf)
-                pageGroupNum += 1
-            else:
-                pageCounter += 1
         
 
 def runRegExMatching(content, regexlist):
