@@ -90,6 +90,11 @@ class document(object):
         self.sendType = ''
         self.containsMultipleInvoices = False
         self.inDebugFolder = False
+        if str(self.location[-6:-1]) == "Debug":
+            self.inDebugFolder = True
+            writefile(self.fileText, DebugFolder, self.fileName[:-4]+" (debug-pdftotext).txt")
+            appendToDebugLog("Debug ran. ",**{"File Name":self.fileName, "File Type":self.fileType})
+
         if self.fileType == "Unknown":
             moveToFolder(self.location, self.fileName, ErroredFolder)
             appendToDebugLog("File type unknown. ", **{"File Name":self.fileName})
@@ -146,7 +151,6 @@ class document(object):
 
     def checkIfSplitRequired(self, fileText):
         if len(re.findall(r'Order Number', self.fileText)) > 1 or len(re.findall(r'PAGE {,2}1\D', self.fileText)) > 1 or len(re.findall(r'SUPPLEMENT\n|CONCESSION\n',self.fileText)) > 1: # if it contains 'Order Number' or 'PAGE 1' more than once, it probably contains multiple documents
-            print(re.findall(r'SUPPLEMENT\n|CONCESSION\n',self.fileText))
             return True
         else:
             return False
@@ -157,11 +161,8 @@ class document(object):
 
         RegexMatches = re.findall(self.mainRegex, self.fileText)
         distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
-        if str(self.location[-6:-1]) == "Debug":
-            self.inDebugFolder = True
+        if self.inDebugFolder == True:
             writefile(RegexMatches, DebugFolder, self.fileName[:-4]+" (debug-regexmatches).txt")
-            writefile(self.fileText, DebugFolder, self.fileName[:-4]+" (debug-pdftotext).txt")
-            appendToDebugLog("Debug ran. ",**{"File Name":self.fileName, "File Type":self.fileType})
         for n, x in enumerate(distinctInfo[0]):
             fieldEntries[self.distinctInfoList[n]] = x
         for x in RegexMatches:
@@ -217,50 +218,74 @@ class document(object):
         mostRecentGroup = ''
         pageGroups = {}
         doc = PDFReader(self.location+self.fileName)
+
+        if self.inDebugFolder == True:
+            return
+
         for x in doc.pages:
             text = x.extractText()
             pageNum = re.search(r'PAGE {,2}(\d+)', text)
+            isMack = False
             sup = None
             first6Lines = ''.join(x for x in text.split('\n')[:6])
-            if "SUPPLEMENT" in first6Lines:
-                sup = 'Supplement'
-            elif "CONCESSION" in first6Lines:
-                sup = 'Concession'
-            if sup != None:
-                invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                supplementLocation = SuspendedFolder+sup+' - '+invoiceNumber+'.pdf'
-                if Path(supplementLocation).exists():
-                    olddata = PDFReader(supplementLocation)
-                    with open(supplementLocation, 'wb') as updatedPDF:
-                        newFile = PDFWriter()
-                        newFile.appendPagesFromReader(olddata)
-                        newFile.addPage(x)
-                        newFile.write(updatedPDF)
-                else:
-                    with open(supplementLocation, 'wb') as updatedPDF:
-                        newFile = PDFWriter()
-                        newFile.addPage(x)
-                        newFile.write(updatedPDF)
-            elif pageNum != None:
-                if int(pageNum.group(1)) > lastPageNum:
-                    if int(pageNum.group(1)) == 1:
+            try:
+                if "SUPPLEMENT" in first6Lines:
+                    sup = 'Supplement'
+                elif "CONCESSION" in first6Lines:
+                    sup = 'Concession'
+                elif "MACK TRUCKS, INC." in first6Lines:
+                    isMack = True
+                if sup != None:
+                    invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                    supplementLocation = SuspendedFolder+sup+' - '+invoiceNumber+'.pdf'
+                    if Path(supplementLocation).exists():
+                        olddata = PDFReader(supplementLocation)
+                        with open(supplementLocation, 'wb') as updatedPDF:
+                            newFile = PDFWriter()
+                            newFile.appendPagesFromReader(olddata)
+                            newFile.addPage(x)
+                            newFile.write(updatedPDF)
+                    else:
+                        with open(supplementLocation, 'wb') as updatedPDF:
+                            newFile = PDFWriter()
+                            newFile.addPage(x)
+                            newFile.write(updatedPDF)
+                elif pageNum != None:                           # Volvo invoices have page numbers. If the page number goes up, you have a Volvo invoice.
+                    if int(pageNum.group(1)) > lastPageNum:
+                        if int(pageNum.group(1)) == 1:
+                            invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                            pageGroups[invoiceNumber] = [x]
+                            mostRecentGroup = invoiceNumber
+                        else:
+                            pageGroups[mostRecentGroup].append(x)
+                        lastPageNum += 1
+                    else:
                         invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
                         pageGroups[invoiceNumber] = [x]
                         mostRecentGroup = invoiceNumber
-                    else:
+                        lastPageNum = 1
+                elif isMack == True:
+                    MackOrderNum = re.search(r'(\d{8})(?=\d{2}/\d{2})', text)
+                    if MackOrderNum != None and len(MackOrderNum.groups()) > 0:
+                        mostRecentGroup = MackOrderNum.group(1)
+                    if mostRecentGroup in pageGroups:
                         pageGroups[mostRecentGroup].append(x)
-                    lastPageNum += 1
-                else:
-                    invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                    pageGroups[invoiceNumber] = [x]
-                    mostRecentGroup = invoiceNumber
-                    lastPageNum = 1
+                    else:
+                        pageGroups[mostRecentGroup] = [x]
+            except Exception as exc:
+                appendToDebugLog(exc, **{"Is Mack":isMack, "Supplement or Concession":sup, "Contents":text})
+                
+
         for x in pageGroups:
-            with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
+            try:
                 newFile = PDFWriter()
                 for y in pageGroups[x]:
                     newFile.addPage(y)
-                newFile.write(newInvoice)
+                with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
+                    newFile.write(newInvoice)
+                    newInvoice.close()
+            except Exception as exc:
+                appendToDebugLog("Could not create file for Invoice Number: "+x)
         moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
         
 
@@ -390,7 +415,8 @@ def startProcessing(x):
     attempts = 0
     while True:                     # Check if file can be accessed (which means it's done being written to the folder)
         try:
-            with open(pdfFileLocation+pdfFile, 'r'):
+            with open(pdfFileLocation+pdfFile, 'rb') as openTest:
+                assert openTest.read() != ''     # If it can be read in full (and finds the EOF marker) then it will continue. Otherwise, it will error here and loop again.
                 break
         except:
             attempts += 1
