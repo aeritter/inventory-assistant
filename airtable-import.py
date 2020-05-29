@@ -83,8 +83,18 @@ class document(object):
         self.fileName = fileName
         self.location = fileParentFolder
         self.orderNumber = None
-        self.numberOfPages = PDFReader(self.location+self.fileName).getNumPages()
-        self.fileText = self.getPDFText(fileName)
+        attempt = 0
+        while True:
+            try:
+                self.numberOfPages = PDFReader(self.location+self.fileName).getNumPages()
+                break
+            except:
+                attempt += 1
+                if attempt > 60:
+                    break
+                else:
+                    time.sleep(.3)
+        self.fileText = getPDFText(fileParentFolder+fileName)
         self.fileType = "Unknown"
         self.determineFileType()
         self.sendType = ''
@@ -114,19 +124,6 @@ class document(object):
         self.distinctInfoList = var.distinctInfoList[self.fileType]
         self.make = var.make[self.fileType]
         self.status = var.status[self.fileType]
-
-    def getPDFText(self, filename):
-        try:
-            fileText = subprocess.run([pdftotextExecutable, '-nopgbrk', '-simple', '-raw', self.location+self.fileName,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
-        except Exception as exc:
-            # try:
-            #     os.remove(pdftotextExecutable)
-            #     downloadpdftotext()
-            # except Exception as exc:
-            #     print(exc)
-            print("getPDFText() failed: ",str(exc))
-            return "Error"
-        return fileText
 
     def determineFileType(self):
         if self.fileText.count('\n') > 5:
@@ -222,12 +219,13 @@ class document(object):
         if self.inDebugFolder == True:
             return
 
-        for x in doc.pages:
-            text = x.extractText()
-            pageNum = re.search(r'PAGE {,2}(\d+)', text)
+        for pdfPageNum, pageObject in enumerate(doc.pages, 1):
+            text = getPDFText(self.location+self.fileName, pdfPageNum)
+            invPageNum = re.search(r'PAGE {,2}(\d+)', text)
             isMack = False
+            creditMemo = False
             sup = None
-            first6Lines = ''.join(x for x in text.split('\n')[:6])
+            first6Lines = ''.join(z for z in text.split('\n')[:6])
             try:
                 if "SUPPLEMENT" in first6Lines:
                     sup = 'Supplement'
@@ -235,58 +233,109 @@ class document(object):
                     sup = 'Concession'
                 elif "MACK TRUCKS, INC." in first6Lines:
                     isMack = True
+                    if "CREDIT MEMO" in first6Lines:
+                        creditMemo = True
                 if sup != None:
-                    invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
+                    invoiceNumberRegex = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text)
+                    if invoiceNumberRegex == None:              # Skip Supplement pages that do not contain a vehicle ID number.
+                        continue
+                    invoiceNumber = invoiceNumberRegex.group(1)
                     supplementLocation = SuspendedFolder+sup+' - '+invoiceNumber+'.pdf'
                     if Path(supplementLocation).exists():
                         olddata = PDFReader(supplementLocation)
                         with open(supplementLocation, 'wb') as updatedPDF:
                             newFile = PDFWriter()
                             newFile.appendPagesFromReader(olddata)
-                            newFile.addPage(x)
+                            newFile.addPage(pageObject)
                             newFile.write(updatedPDF)
                     else:
                         with open(supplementLocation, 'wb') as updatedPDF:
                             newFile = PDFWriter()
-                            newFile.addPage(x)
+                            newFile.addPage(pageObject)
                             newFile.write(updatedPDF)
-                elif pageNum != None:                           # Volvo invoices have page numbers. If the page number goes up, you have a Volvo invoice.
-                    if int(pageNum.group(1)) > lastPageNum:
-                        if int(pageNum.group(1)) == 1:
+                elif invPageNum != None:                           # Volvo invoices have page numbers. If the page number goes up, you have a Volvo invoice.
+                    if int(invPageNum.group(1)) > lastPageNum:
+                        if int(invPageNum.group(1)) == 1:
                             invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                            pageGroups[invoiceNumber] = [x]
+                            pageGroups[invoiceNumber] = [pageObject]
                             mostRecentGroup = invoiceNumber
                         else:
-                            pageGroups[mostRecentGroup].append(x)
+                            pageGroups[mostRecentGroup].append(pageObject)
                         lastPageNum += 1
                     else:
                         invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                        pageGroups[invoiceNumber] = [x]
+                        pageGroups[invoiceNumber] = [pageObject]
                         mostRecentGroup = invoiceNumber
                         lastPageNum = 1
                 elif isMack == True:
-                    MackOrderNum = re.search(r'(\d{8})(?=\d{2}/\d{2})', text)
-                    if MackOrderNum != None and len(MackOrderNum.groups()) > 0:
+                    MackOrderNum = re.search(r'\D(\d{8})\D', text)
+
+                    # if MackOrderNum == None:
+                    #     appendToDebugLog("Could not find order number for Mack invoice when splitting PDF!")
+                    #     writefile(text, DebugFolder, str(time.time())+' missing order number.txt')
+                    #     continue
+                    if creditMemo == True:
+                        if MackOrderNum != None and len(MackOrderNum.groups()) > 0
+                            with open(SuspendedFolder+'Credit Memo - '+MackOrderNum.group(1)+'.pdf', 'wb') as cMemo:
+                                newFile = PDFWriter()
+                                newFile.addPage(pageObject)
+                                newFile.write(cMemo)
+                            continue
+                        else:
+                            oldFile = None
+                            if Path(ErroredFolder+'Errored Pages.pdf').exists():
+                                oldFile = PDFReader(ErroredFolder+'Errored Pages.pdf')
+                            with open(ErroredFolder+'Errored Pages.pdf', 'wb') as err:
+                                newFile = PDFWriter()
+                                if oldFile != None:
+                                    newFile.appendPagesFromReader(oldFile)
+                                newFile.addPage(pageObject)
+                                newFile.write(err)
+                            continue
+
+
+                    if MackOrderNum != None and len(MackOrderNum.groups()) > 0 and "COMMERCIAL INVOICE" in first6Lines:
                         mostRecentGroup = MackOrderNum.group(1)
                     if mostRecentGroup in pageGroups:
-                        pageGroups[mostRecentGroup].append(x)
+                        pageGroups[mostRecentGroup].append(pageObject)
                     else:
-                        pageGroups[mostRecentGroup] = [x]
+                        pageGroups[mostRecentGroup] = [pageObject]
             except Exception as exc:
                 appendToDebugLog(exc, **{"Is Mack":isMack, "Supplement or Concession":sup, "Contents":text})
                 
-
+        print(list(i for i in pageGroups))
         for x in pageGroups:
             try:
                 newFile = PDFWriter()
                 for y in pageGroups[x]:
                     newFile.addPage(y)
-                with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
-                    newFile.write(newInvoice)
-                    newInvoice.close()
+                attempts = 0
+                while True:
+                    try:
+                        with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
+                            newFile.write(newInvoice)
+                            break
+                    except:
+                        attempts += 1
+                        if attempts > 20:
+                            raise Exception('Could not open file after 20 attempts (10 seconds)')
+                        time.sleep(.5)
             except Exception as exc:
                 appendToDebugLog("Could not create file for Invoice Number: "+x)
         moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
+        
+def getPDFText(filePath, pageToConvert=0):  # pageToConvert=0 means all pages.
+    try:
+        fileText = subprocess.run([pdftotextExecutable, '-f', str(pageToConvert), '-l', str(pageToConvert), '-nopgbrk', '-simple', '-raw', filePath,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+    except Exception as exc:
+        # try:
+        #     os.remove(pdftotextExecutable)
+        #     downloadpdftotext()
+        # except Exception as exc:
+        #     print(exc)
+        print("getPDFText() failed: ",str(exc))
+        return "Error"
+    return fileText
         
 
 def runRegExMatching(content, regexlist):
@@ -342,8 +391,8 @@ def uploadDataToAirtable(content, sendType):                 # uploads the data 
 def retrieveRecordsFromAirtable(offset=None):
     while True:
         try:
-            if enableAirtablePosts != True:
-                return "Airtable connection disabled."
+            # if enableAirtablePosts != True:
+            #     return "Airtable connection disabled."
             if offset == None:
                 x = requests.get(airtableURL+airtableURLFields, data=None, headers=AirtableAPIHeaders)
             else:
@@ -431,8 +480,8 @@ def startProcessing(x):
     if pdf.containsMultipleInvoices == True:
         pdf.splitPDF()
         print("Compute time: ", str(time.time()-start_time))
-        return None
-    elif pdf.inDebugFolder == True:             # if it came from the debug folder, move to Done without uploading to Airtable
+        return
+    elif pdf.inDebugFolder == True or enableAirtablePosts != True:             # if it came from the debug folder, move to Done without uploading to Airtable
         moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
         print("Compute time: ", str(time.time()-start_time))
     else:
