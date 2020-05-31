@@ -1,5 +1,9 @@
 # Airtable Import
 A program designed to take PDFs and extract data for upload to Airtable. Files are available to build a Docker container.
+
+*NOTE*: Needs a re-write for many sections. I only learned about OOP after I had made a lot of progress with this so it's far from ideal and harder to understand/edit than it should be. For now, it does what was intended but I will fix it up when I have the time. Specifically, creating some sort of Data class for each object and creating separation between those objects and the inputs/outputs.
+
+
 ### To Run:
 The program can be run directly, so long as you have Python installed and install any dependencies by running this command from the command line: `pip install pywin32, requests, pypdf2`.
 Otherwise, it can be run from Docker by running the following commands from within the program's folder:
