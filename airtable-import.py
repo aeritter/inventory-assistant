@@ -275,7 +275,7 @@ class document(object):
                     #     writefile(text, DebugFolder, str(time.time())+' missing order number.txt')
                     #     continue
                     if creditMemo == True:
-                        if MackOrderNum != None and len(MackOrderNum.groups()) > 0
+                        if MackOrderNum != None and len(MackOrderNum.groups()) > 0:
                             with open(SuspendedFolder+'Credit Memo - '+MackOrderNum.group(1)+'.pdf', 'wb') as cMemo:
                                 newFile = PDFWriter()
                                 newFile.addPage(pageObject)
