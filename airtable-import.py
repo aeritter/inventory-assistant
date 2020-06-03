@@ -1,10 +1,14 @@
+#   This thing could really use a re-write. It needs a Truck class, with each instance of a truck being created from
+# the information in Airtable. New information from PDFs would get incorporated into the list of instances and then
+# pushed back up to Airtable.
+
 import re, os.path, subprocess, time, importlib, sys
 import win32file, win32con, win32event, win32net, pywintypes
 import json, requests, multiprocessing, configparser
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
+from PyPDF2 import pdf as pdfObj
 from pathlib import Path
-# from airtableconnector import airtable
 
 
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
@@ -83,6 +87,7 @@ class document(object):
         self.fileName = fileName
         self.location = fileParentFolder
         self.orderNumber = None
+        time.sleep(.5)
         attempt = 0
         while True:
             try:
@@ -257,14 +262,14 @@ class document(object):
                     if int(invPageNum.group(1)) > lastPageNum:
                         if int(invPageNum.group(1)) == 1:
                             invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                            pageGroups[invoiceNumber] = [pageObject]
+                            pageGroups[invoiceNumber] = pageGroup('Volvo',pageObject)
                             mostRecentGroup = invoiceNumber
                         else:
-                            pageGroups[mostRecentGroup].append(pageObject)
+                            pageGroups[mostRecentGroup].addPage(pageObject)
                         lastPageNum += 1
                     else:
                         invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                        pageGroups[invoiceNumber] = [pageObject]
+                        pageGroups[invoiceNumber] = pageGroup('Volvo',pageObject)
                         mostRecentGroup = invoiceNumber
                         lastPageNum = 1
                 elif isMack == True:
@@ -297,22 +302,56 @@ class document(object):
                     if MackOrderNum != None and len(MackOrderNum.groups()) > 0 and "COMMERCIAL INVOICE" in first6Lines:
                         mostRecentGroup = MackOrderNum.group(1)
                     if mostRecentGroup in pageGroups:
-                        pageGroups[mostRecentGroup].append(pageObject)
+                        pageGroups[mostRecentGroup].addPage(pageObject)
                     else:
-                        pageGroups[mostRecentGroup] = [pageObject]
+                        pageGroups[mostRecentGroup] = pageGroup('Mack',pageObject)
+                else:
+                    appendToDebugLog("Could not determine page type when splitting.", **{"Contents":text})
+                    oldFile = None                                                  # From here
+                    if Path(ErroredFolder+'Errored Pages.pdf').exists():
+                        oldFile = PDFReader(ErroredFolder+'Errored Pages.pdf')
+                    with open(ErroredFolder+'Errored Pages.pdf', 'wb') as err:
+                        newFile = PDFWriter()
+                        if oldFile != None:
+                            newFile.appendPagesFromReader(oldFile)
+                        newFile.addPage(pageObject)
+                        newFile.write(err)
+                    continue                                                        # To here, is a copy of the above. Create function.
             except Exception as exc:
                 appendToDebugLog(exc, **{"Is Mack":isMack, "Supplement or Concession":sup, "Contents":text})
                 
-        print(list(i for i in pageGroups))
+        print("Now writing invoices.")
         for x in pageGroups:
             try:
                 newFile = PDFWriter()
-                for y in pageGroups[x]:
+                creditMemo = False
+
+                # if Path(SuspendedFolder+"Credit Memo - "+x+".pdf").exists():        # This section runs fine, but for some reason the Memo doesn't end up in the final PDF. Rewriting soon anyway.
+                #     creditMemo = True
+                #     oldFile = PDFReader(SuspendedFolder+"Credit Memo - "+x+".pdf")
+                #     memoText = getPDFText(SuspendedFolder+"Credit Memo - "+x+".pdf")
+                #     memoSearch = re.search(r'INVOICE NET PRICE.*?(?=\d)(\S*?)\n', memoText)
+                #     if memoSearch != None and len(memoSearch.groups()) > 0:
+                #         if memoSearch.group(1) == pageGroups[x].getNetPrice():
+                #             for z in oldFile.pages:
+                #                 newFile.addPage(z)
+                #                 print(z.extractText())
+                #         else:
+                #             appendToDebugLog("memoSearch match does not match getNetPrice", **{"memoSearch":memoSearch.group(1), "getNetPrice()":pageGroups[x].getNetPrice()})
+                #     else:
+                #         appendToDebugLog("No match found for memoSearch", **{"Text":memoText})
+
+                for y in pageGroups[x].pages:
                     newFile.addPage(y)
+
+                if creditMemo == False:
+                    name = "Invoice - "
+                else:
+                    name = "Suspended/Credit Memo - "
                 attempts = 0
                 while True:
                     try:
-                        with open(pdfFolderLocation+'Invoice - '+x+'.pdf', 'wb') as newInvoice:
+                        with open(pdfFolderLocation +name +x +'.pdf', 'wb') as newInvoice:
                             newFile.write(newInvoice)
                             break
                     except:
@@ -323,6 +362,31 @@ class document(object):
             except Exception as exc:
                 appendToDebugLog("Could not create file for Invoice Number: "+x)
         moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
+
+
+class pageGroup(object):  # pages variable must be one or more instances of a PyPDF2 page object.
+    def __init__(self, docType, pages):
+        self.docType = docType
+        self.price = 'Unknown'
+        if isinstance(pages, list):
+            if all(isinstance(x, pdfObj.PageObject) for x in pages):
+                self.pages = pages
+        elif isinstance(pages, pdfObj.PageObject):
+                self.pages = [pages]
+        else:
+            appendToDebugLog("pageGroup creation failed, did not add PageObject objects when creating class")
+            raise Exception("pageGroup creation failed, did not add PageObject objects when creating class")
+
+    def addPage(self, page):
+        self.pages.append(page)
+    def getNetPrice(self):
+        for x in self.pages:
+            price = re.search(r'INVOICE NET PRICE.*?(?: |-)(\S*?)\n', x.extractText())
+            if price != None and len(price.groups()) > 0:
+                self.price = price
+                return self.price
+
+
         
 def getPDFText(filePath, pageToConvert=0):  # pageToConvert=0 means all pages.
     try:
@@ -545,7 +609,6 @@ def main(pool):
         if initialize.Folder_Check() != True:
             print("Folder check failed")
             raise Exception("Folder check failed")
-        print("Waiting for files.")
 
         updateAirtableRecordsCache()
         flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
@@ -557,6 +620,8 @@ def main(pool):
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         buffer = win32file.AllocateReadBuffer(8192)
+
+        print("Waiting for files.")
 
         lastCheckTime = 0
         conversionlistsOK = True
