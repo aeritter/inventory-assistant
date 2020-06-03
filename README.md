@@ -1,7 +1,7 @@
 # Airtable Import
 A program designed to take PDFs and extract data for upload to Airtable. Files are available to build a Docker container.
 
-*NOTE*: Needs a re-write for many sections. I only learned about OOP after I had made a lot of progress with this so it's far from ideal and harder to understand/edit than it should be. For now, it does what was intended but I will fix it up when I have the time. Specifically, creating some sort of Data class for each object and creating separation between those objects and the inputs/outputs.
+*NOTE*: Needs a re-write for many sections. I only learned about OOP after I had made a lot of progress with this so it's far from ideal and harder to understand/edit than it should be. For now, it does what was intended but I will fix it up when I have the time. Specifically, creating some sort of class to handle inventory objects and another to place them all in (and to run methods for gathering all relevant inventory objects within), and creating separation between those objects and the inputs/outputs.
 
 
 ### To Run:
