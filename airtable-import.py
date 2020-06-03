@@ -1,6 +1,7 @@
 #   This thing could really use a re-write. It needs a Truck class, with each instance of a truck being created from
 # the information in Airtable. New information from PDFs would get incorporated into the list of instances and then
 # pushed back up to Airtable.
+version = '0.9.0'
 
 import re, os.path, subprocess, time, importlib, sys
 import win32file, win32con, win32event, win32net, pywintypes
