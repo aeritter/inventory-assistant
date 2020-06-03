@@ -1,7 +1,7 @@
 #   This thing could really use a re-write. It needs a Truck class, with each instance of a truck being created from
 # the information in Airtable. New information from PDFs would get incorporated into the list of instances and then
 # pushed back up to Airtable.
-version = '0.9.0'
+version = '0.9.1'
 
 import re, os.path, subprocess, time, importlib, sys
 import win32file, win32con, win32event, win32net, pywintypes
@@ -227,7 +227,7 @@ class document(object):
 
         for pdfPageNum, pageObject in enumerate(doc.pages, 1):
             text = getPDFText(self.location+self.fileName, pdfPageNum)
-            invPageNum = re.search(r'PAGE {,2}(\d+)', text)
+            invPageNum = re.search(r'PAGE {,3}(\d+)', text)
             isMack = False
             creditMemo = False
             sup = None
