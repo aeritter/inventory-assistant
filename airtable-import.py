@@ -1,17 +1,15 @@
-#   This thing could really use a re-write. It needs a Truck class, with each instance of a truck being created from
-# the information in Airtable. New information from PDFs would get incorporated into the list of instances and then
-# pushed back up to Airtable.
-version = '0.9.1'
+version = '1.0.0'
 
-import re, os.path, subprocess, time, importlib, sys
-import win32file, win32con, win32event, win32net, pywintypes
-import json, requests, multiprocessing, configparser
+import re, os.path, subprocess, time, importlib, sys, urllib.parse
+import win32file, win32con, win32event, win32net, pywintypes        # watchdog can probably replace all these (pip install watchdog)
+import json, requests, multiprocessing, threading, queue, configparser
+import fitz # fitz = PyMuPDF
 from PyPDF2 import PdfFileReader as PDFReader 
 from PyPDF2 import PdfFileWriter as PDFWriter
 from PyPDF2 import pdf as pdfObj
 from pathlib import Path
 
-
+lock = threading.Lock()
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 config = configparser.ConfigParser()
 config.read(mainFolder+'settings.ini')
@@ -29,16 +27,14 @@ if pdfFolderLocation[:2] == '//' or pdfFolderLocation[:2] == '\\\\':
     win32net.NetUseAdd(None, 2, netdata)
 
 DebugFolder = config['Paths']['debug_folder']
-DoneFolder = config['Paths']['done_folder']
-ErroredFolder = config['Paths']['errored_folder']
 SettingsFolder = config['Paths']['settings_folder']
-SuspendedFolder = config['Paths']['suspended_folder']
-UnsplitTRKINVFolder = config['Paths']['unsplit_trkinv_folder']
+OriginalDocsFolder = config['Paths']['original_docs_folder']
+DocumentsFolder = config['Paths']['documents_folder']
 pdftotextExecutable = SettingsFolder+"/pdftotext.exe"
 
+airtableURLFields = ""
 airtableURL = config['Other']['airtable_url']
 slackURL = config['Other']['slack_url']
-airtableURLFields = config['Other']['airtable_url_fields']
 airtableAPIKey = config['Other']['airtable_api_key']
 readDirTimeout = int(config['Other']['read_dir_timeout'])*1000     # *1000 to convert milliseconds to seconds
 debug = config['Other'].getboolean('enable_debug')
@@ -48,7 +44,6 @@ enableSlackStatusUpdate = config['Other'].getboolean('enable_status_update')
 CheckinHour = int(float(config['Other']['check-in_hour'])*60*60)
 TimeBetweenCheckins = float(config['Other']['time_between_check-ins_in_minutes'])*60*10000000 #converted to 100 nanoseconds for the function
 
-sys.path.append(SettingsFolder)                                     # Give script a path to find conversionlists.py
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+airtableAPIKey),
@@ -57,434 +52,323 @@ AirtableAPIHeaders = {
 }
 
 
-class convlists(object):
-    def __init__(self):
-        import conversionlists
-        self.conversionlists = conversionlists
-        self.update()
-    def update(self):
-        try:
-            time.sleep(1)
-            import conversionlists
-            importlib.reload(conversionlists)
-            from conversionlists import headerConversionList, dealerCodes, ignoreList, mainRegex, distinctInfoRegex, distinctInfoList, make, status
-            self.headerConversionList = headerConversionList
-            self.dealerCodes = dealerCodes
-            self.ignoreList = ignoreList
-            self.mainRegex = mainRegex
-            self.distinctInfoRegex = distinctInfoRegex 
-            self.distinctInfoList = distinctInfoList
-            self.make = make
-            self.status = status
-        except Exception as exc:        
-            return exc              # if conversionlists.py could not be loaded, move files to Errored and update the Debug log with the error
-        else:                       # if no errors in reloading conversionlists.py, update cache and run!
-            return True
+reSearchInvoiceNum = re.compile(r'(?<= )\d{7}(?= |\n)|\d{2}/\d{5}')     #NOTE: Needs to be moved to pdfProcessingSettings.json
 
+
+class outputs(object):
+    def __init__(self):
+        self.out = {"airtable":AirtableUpload()}
+    def send(self, invobj, source):
+        for x in self.out:
+            if x != source:
+                self.out[x].send(invobj)
+
+# class inputs(object):     # in progress
+
+
+class page(object):
+    def __init__(self, text):
+        self.text = text
+        try:
+            search = reSearchInvoiceNum.search(self.text)
+            if search != None:
+                self.invoiceNumber = search.group(0)
+            elif search == None:
+                print(self.text)
+            else:
+                raise Exception
+        except:
+            print("Couldn't find invoice num")
+            print("First 3 lines:")
+            print(self.text.split('\n', 3))
+    def getPageType(self):                                      #NOTE: needs refining, separate out into changable variables: lines = list(self.text.readlines()), for x in variables: if x["lineContent"] in lines[x["lineNumber"]-1]: return x["Type"]
+        if self.text.count('\n') > 5:
+            line1 = self.text.split('\n', 1)[0]                 # first line of .txt file
+            line2 = self.text.split('\n', 2)[1]                 # second line of .txt file
+            line5 = self.text.split('\n', 5)[4]                 # 5th line
+            if "Welcome to Volvo" in line1:
+                return "Volvo Order"
+            elif "GSO:" in line2:
+                return "Mack Order"
+            elif "CREDIT MEMO" in line2:
+                return "Credit Memo"
+            elif "SUPPLEMENT" in line5:
+                return "Supplement"
+            elif "MACK TRUCKS, INC." in line1:
+                return "Mack Invoice"
+            elif "PAGE 1" in line1 or "PAGE  1" in line1 or "PAGE   1" in line1:
+                return "Volvo Invoice"
+        # use regex to determine page type, make sure it only matches the first page in a group
 
 class document(object):
-
-    def __init__(self, fileParentFolder, fileName):
-        self.fileName = fileName
-        self.location = fileParentFolder
-        self.orderNumber = None
-        time.sleep(.5)
-        attempt = 0
-        while True:
-            try:
-                self.numberOfPages = PDFReader(self.location+self.fileName).getNumPages()
-                break
-            except:
-                attempt += 1
-                if attempt > 60:
-                    break
-                else:
-                    time.sleep(.3)
-        self.fileText = getPDFText(fileParentFolder+fileName)
-        self.fileType = "Unknown"
-        self.determineFileType()
-        self.sendType = ''
-        self.containsMultipleInvoices = False
-        self.inDebugFolder = False
-        if str(self.location[-6:-1]) == "Debug":
-            self.inDebugFolder = True
-            writefile(self.fileText, DebugFolder, self.fileName[:-4]+" (debug-pdftotext).txt")
-            appendToDebugLog("Debug ran. ",**{"File Name":self.fileName, "File Type":self.fileType})
-
-        if self.fileType == "Unknown":
-            moveToFolder(self.location, self.fileName, ErroredFolder)
-            appendToDebugLog("File type unknown. ", **{"File Name":self.fileName})
-        elif self.fileType == "Supplement":
-            moveToFolder(self.location, self.fileName, SuspendedFolder) #move outside of class, implement check for appending to PDF (if doesn't exist in PDF already)
-        elif self.checkIfSplitRequired(self.fileText) == True:
-            self.containsMultipleInvoices = True
-            print("Multiple invoices!")
+    def __init__(self, pageClass):
+        if type(pageClass) == list:
+            self.pages = pageClass
         else:
-            self.loadVariables()
-            self.records = {"records":self.getRecords()}
+            self.pages = [pageClass]
+        ## The following are set by the PDFSplitter function
+        self.invoiceNumber = None           # unique document identifier
+        self.orderNumber = None             # truck identifier (multiple docs have this)
+        # self.VIN = None
+        self.docType = None
+        self.location = None
 
-    def loadVariables(self):
-        var.update()
-        self.mainRegex = var.mainRegex[self.fileType]
-        self.distinctInfoRegex = var.distinctInfoRegex[self.fileType]
-        self.distinctInfoList = var.distinctInfoList[self.fileType]
-        self.make = var.make[self.fileType]
-        self.status = var.status[self.fileType]
+    
+    def getText(self):
+        return "".join(x.text for x in self.pages)
 
-    def determineFileType(self):
-        if self.fileText.count('\n') > 5:
-            line1 = self.fileText.split('\n', 1)[0]                 # first line of .txt file
-            line2 = self.fileText.split('\n', 2)[1]                 # second line of .txt file
-            line5 = self.fileText.split('\n', 5)[4]                 # 5th line
-            if "Welcome to Volvo" in line1:
-                self.fileType = "Volvo"
-            elif "GSO:" in line2:
-                self.fileType = "Mack"
-            elif "SUPPLEMENT" in line5 and self.numberOfPages == 1:
-                self.fileType = "Supplement"
-            elif "MACK TRUCKS, INC." in line1:
-                self.fileType = "MackInvoice"
-            elif "PAGE  1" in line1 or "PAGE 1" in line1:
-                self.fileType = "VolvoInvoice"
-        # else:
-        #     print("Unknown format.")
-        #     self.fileType = "Unknown"
+    def addPage(self, pageClass):
+        self.pages.append(pageClass)
 
-        return self.fileType
+    def getSpecs(self):
+        specs = {}
+        text = self.getText()
 
-    def checkIfSplitRequired(self, fileText):
-        if len(re.findall(r'Order Number', self.fileText)) > 1 or len(re.findall(r'PAGE {,2}1\D', self.fileText)) > 1 or len(re.findall(r'SUPPLEMENT\n|CONCESSION\n',self.fileText)) > 1: # if it contains 'Order Number' or 'PAGE 1' more than once, it probably contains multiple documents
-            return True
-        else:
-            return False
-
-    def getRecords(self):                                          #       Takes the file and processes it to take out the relevant information
-        fieldEntries = {}                                       #   according to which vendor it came from, then returns the fields for
-        fields = [{"fields":fieldEntries}]                      #   further formatting, to be uploaded using the Airtable API
-
-        RegexMatches = re.findall(self.mainRegex, self.fileText)
-        distinctInfo = re.findall(self.distinctInfoRegex, self.fileText)
-        if self.inDebugFolder == True:
-            writefile(RegexMatches, DebugFolder, self.fileName[:-4]+" (debug-regexmatches).txt")
-        for n, x in enumerate(distinctInfo[0]):
-            fieldEntries[self.distinctInfoList[n]] = x
-        for x in RegexMatches:
-            if x[0] in var.headerConversionList and x[1] not in var.ignoreList:
-                fieldEntries.update(runRegExMatching(x, var.headerConversionList))
-
-        if 'Order Number' not in fieldEntries:
-            try:
-                fieldEntries['Order Number'] = re.search(r'(\d{6,8})', self.fileName).group(1)
-            except:
-                pass
-        
-        if 'Dealer Code' in fieldEntries:
-            if fieldEntries['Dealer Code'] in var.dealerCodes:
-                loc = var.dealerCodes[fieldEntries['Dealer Code']]
-                fieldEntries.update({"Location":loc})
-        fieldEntries["Make"] = self.make
-        if 'Order Number' in fieldEntries:
-            self.orderNumber = fieldEntries['Order Number']
-            record = getRecord(fieldEntries['Order Number'])
-            print(record)
-            if record == None:
-                self.sendType = "Post"
-                fieldEntries["Status Paste"] = self.status
-            else:
-                self.sendType = "Update"
-                fields[0].update({"id":record['id']})
-                statusP = record['fields']['Status Paste']
-                if statusP == 'on order':
-                    fieldEntries["Status Paste"] = self.status
-                elif statusP == 'in stock' and self.status != 'on order':
-                    fieldEntries["Status Paste"] = self.status
-                elif statusP == 'on order - sold' or statusP == 'in stock - sold' or statusP == 'DEMO':
-                    pass
-
-            
-
-            OrderOrInvoice = ''
-            if self.status == "on order":                  # Order means the truck has been ordered but is not yet available (O)
-                OrderOrInvoice = "Order - "
-            elif self.status == "in stock":                # Invoice means the truck has been made an is available (A)
-                OrderOrInvoice = "Invoice - "
-            newName = OrderOrInvoice+self.orderNumber+'.pdf'
-            moveToFolder(self.location,self.fileName, self.location, newName)
-            self.fileName = newName
-            return fields
-
-        else:
-            appendToDebugLog("Could not find order number. ", **{"File Name":self.fileName})
-
-    def splitPDF(self):
-        lastPageNum = 0
-        mostRecentGroup = ''
-        pageGroups = {}
-        doc = PDFReader(self.location+self.fileName)
-
-        if self.inDebugFolder == True:
-            return
-
-        for pdfPageNum, pageObject in enumerate(doc.pages, 1):
-            text = getPDFText(self.location+self.fileName, pdfPageNum)
-            invPageNum = re.search(r'PAGE {,3}(\d+)', text)
-            isMack = False
-            creditMemo = False
-            sup = None
-            first6Lines = ''.join(z for z in text.split('\n')[:6])
-            try:
-                if "SUPPLEMENT" in first6Lines:
-                    sup = 'Supplement'
-                elif "CONCESSION" in first6Lines:
-                    sup = 'Concession'
-                elif "MACK TRUCKS, INC." in first6Lines:
-                    isMack = True
-                    if "CREDIT MEMO" in first6Lines:
-                        creditMemo = True
-                if sup != None:
-                    invoiceNumberRegex = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text)
-                    if invoiceNumberRegex == None:              # Skip Supplement pages that do not contain a vehicle ID number.
-                        continue
-                    invoiceNumber = invoiceNumberRegex.group(1)
-                    supplementLocation = SuspendedFolder+sup+' - '+invoiceNumber+'.pdf'
-                    if Path(supplementLocation).exists():
-                        olddata = PDFReader(supplementLocation)
-                        with open(supplementLocation, 'wb') as updatedPDF:
-                            newFile = PDFWriter()
-                            newFile.appendPagesFromReader(olddata)
-                            newFile.addPage(pageObject)
-                            newFile.write(updatedPDF)
-                    else:
-                        with open(supplementLocation, 'wb') as updatedPDF:
-                            newFile = PDFWriter()
-                            newFile.addPage(pageObject)
-                            newFile.write(updatedPDF)
-                elif invPageNum != None:                           # Volvo invoices have page numbers. If the page number goes up, you have a Volvo invoice.
-                    if int(invPageNum.group(1)) > lastPageNum:
-                        if int(invPageNum.group(1)) == 1:
-                            invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                            pageGroups[invoiceNumber] = pageGroup('Volvo',pageObject)
-                            mostRecentGroup = invoiceNumber
-                        else:
-                            pageGroups[mostRecentGroup].addPage(pageObject)
-                        lastPageNum += 1
-                    else:
-                        invoiceNumber = re.search(r'(?:VEHICLE I.D. NBR: |VEH. ID. NO.: ).*?(\d{6})', text).group(1)
-                        pageGroups[invoiceNumber] = pageGroup('Volvo',pageObject)
-                        mostRecentGroup = invoiceNumber
-                        lastPageNum = 1
-                elif isMack == True:
-                    MackOrderNum = re.search(r'\D(\d{8})\D', text)
-
-                    # if MackOrderNum == None:
-                    #     appendToDebugLog("Could not find order number for Mack invoice when splitting PDF!")
-                    #     writefile(text, DebugFolder, str(time.time())+' missing order number.txt')
-                    #     continue
-                    if creditMemo == True:
-                        if MackOrderNum != None and len(MackOrderNum.groups()) > 0:
-                            with open(SuspendedFolder+'Credit Memo - '+MackOrderNum.group(1)+'.pdf', 'wb') as cMemo:
-                                newFile = PDFWriter()
-                                newFile.addPage(pageObject)
-                                newFile.write(cMemo)
-                            continue
-                        else:
-                            oldFile = None
-                            if Path(ErroredFolder+'Errored Pages.pdf').exists():
-                                oldFile = PDFReader(ErroredFolder+'Errored Pages.pdf')
-                            with open(ErroredFolder+'Errored Pages.pdf', 'wb') as err:
-                                newFile = PDFWriter()
-                                if oldFile != None:
-                                    newFile.appendPagesFromReader(oldFile)
-                                newFile.addPage(pageObject)
-                                newFile.write(err)
-                            continue
-
-
-                    if MackOrderNum != None and len(MackOrderNum.groups()) > 0 and "COMMERCIAL INVOICE" in first6Lines:
-                        mostRecentGroup = MackOrderNum.group(1)
-                    if mostRecentGroup in pageGroups:
-                        pageGroups[mostRecentGroup].addPage(pageObject)
-                    else:
-                        pageGroups[mostRecentGroup] = pageGroup('Mack',pageObject)
-                else:
-                    appendToDebugLog("Could not determine page type when splitting.", **{"Contents":text})
-                    oldFile = None                                                  # From here
-                    if Path(ErroredFolder+'Errored Pages.pdf').exists():
-                        oldFile = PDFReader(ErroredFolder+'Errored Pages.pdf')
-                    with open(ErroredFolder+'Errored Pages.pdf', 'wb') as err:
-                        newFile = PDFWriter()
-                        if oldFile != None:
-                            newFile.appendPagesFromReader(oldFile)
-                        newFile.addPage(pageObject)
-                        newFile.write(err)
-                    continue                                                        # To here, is a copy of the above. Create function.
-            except Exception as exc:
-                appendToDebugLog(exc, **{"Is Mack":isMack, "Supplement or Concession":sup, "Contents":text})
+        def findSpecsRecursively(section, txt, parent=0):
+            for name, value in section.items():
+                if name == "Properties" and type(value) == dict:
+                    specs.update(section[name])
+                elif name == "Search":
+                    if type(value) == str:
+                        # findSpecsRecursively(pdfProcessingData.data["SearchLists"][value], txt)
+                        pass
+                    elif type(value) == dict:
+                        findSpecsRecursively(value, txt, name)
                 
-        print("Now writing invoices.")
-        for x in pageGroups:
-            try:
-                newFile = PDFWriter()
-                creditMemo = False
-
-                # if Path(SuspendedFolder+"Credit Memo - "+x+".pdf").exists():        # This section runs fine, but for some reason the Memo doesn't end up in the final PDF. Rewriting soon anyway.
-                #     creditMemo = True
-                #     oldFile = PDFReader(SuspendedFolder+"Credit Memo - "+x+".pdf")
-                #     memoText = getPDFText(SuspendedFolder+"Credit Memo - "+x+".pdf")
-                #     memoSearch = re.search(r'INVOICE NET PRICE.*?(?=\d)(\S*?)\n', memoText)
-                #     if memoSearch != None and len(memoSearch.groups()) > 0:
-                #         if memoSearch.group(1) == pageGroups[x].getNetPrice():
-                #             for z in oldFile.pages:
-                #                 newFile.addPage(z)
-                #                 print(z.extractText())
-                #         else:
-                #             appendToDebugLog("memoSearch match does not match getNetPrice", **{"memoSearch":memoSearch.group(1), "getNetPrice()":pageGroups[x].getNetPrice()})
-                #     else:
-                #         appendToDebugLog("No match found for memoSearch", **{"Text":memoText})
-
-                for y in pageGroups[x].pages:
-                    newFile.addPage(y)
-
-                if creditMemo == False:
-                    name = "Invoice - "
+                elif name == "Findall":
+                    if type(value) == dict:
+                        result = value["Regex"].findall(txt, re.M)
+                        matchlist = pdfProcessingData.data["MatchLists"][value["Match"]]
+                        for x in result:
+                            if x[0] in matchlist:
+                                findSpecsRecursively(matchlist[x[0]], x[1])
                 else:
-                    name = "Suspended/Credit Memo - "
-                attempts = 0
-                while True:
-                    try:
-                        with open(pdfFolderLocation +name +x +'.pdf', 'wb') as newInvoice:
-                            newFile.write(newInvoice)
-                            break
-                    except:
-                        attempts += 1
-                        if attempts > 20:
-                            raise Exception('Could not open file after 20 attempts (10 seconds)')
-                        time.sleep(.5)
+                    if value == 1:
+                        specs[name] = txt
+                    elif type(value) == dict and "Replace" in value:
+                        result = value["Replace"]["Regex"].search(txt)
+                        replacementList = pdfProcessingData.data["ReplaceLists"][value["Replace"]["ReplaceList"]]
+                        if result != None and len(result.groups()) > 0:
+                            if result.group(1) in replacementList:
+                                specs[name] = replacementList[result.group(1)]
+
+
+                    else:
+                        result = value.search(txt)
+                        if result != None and len(result.groups()) > 0:
+                            specs[name] = result.group(1)
+
+        if self.docType in pdfProcessingData.data["fileTypes"]:
+            procSet = pdfProcessingData.data["fileTypes"][self.docType]
+            try:
+                findSpecsRecursively(procSet, text)
             except Exception as exc:
-                appendToDebugLog("Could not create file for Invoice Number: "+x)
-        moveToFolder(pdfFolderLocation, self.fileName, UnsplitTRKINVFolder)
+                appendToDebugLog("Could not find specs, something went wrong.", **{"Error":exc})
+        return specs
 
 
-class pageGroup(object):  # pages variable must be one or more instances of a PyPDF2 page object.
-    def __init__(self, docType, pages):
-        self.docType = docType
-        self.price = 'Unknown'
-        if isinstance(pages, list):
-            if all(isinstance(x, pdfObj.PageObject) for x in pages):
-                self.pages = pages
-        elif isinstance(pages, pdfObj.PageObject):
-                self.pages = [pages]
-        else:
-            appendToDebugLog("pageGroup creation failed, did not add PageObject objects when creating class")
-            raise Exception("pageGroup creation failed, did not add PageObject objects when creating class")
 
-    def addPage(self, page):
-        self.pages.append(page)
-    def getNetPrice(self):
-        for x in self.pages:
-            price = re.search(r'INVOICE NET PRICE.*?(?: |-)(\S*?)\n', x.extractText())
-            if price != None and len(price.groups()) > 0:
-                self.price = price
-                return self.price
-
-
+class inventoryObject(object): 
+    def __init__(self, uniqueIdentifier):
+        self.uniqueIdentifier = uniqueIdentifier
+        self.documents = []             # refers to document class
+        self.specs = None               # dictionary of specs eg. {"Engine Model":"D13"}
+        self.airtableRefID = None
+    def formatForAirtableUpdate(self):
+        return {"id":self.airtableRefID, "fields":self.specs}
+    def formatForAirtableCreate(self):
+        return {"fields":self.specs}
+    def getSpecsFromDocs(self):
+        if len(self.documents) == 0:
+            raise Exception("self.documents does not contain any information")
+        for x in self.documents:
+            self.specs.update(x.getSpecs())
         
-def getPDFText(filePath, pageToConvert=0):  # pageToConvert=0 means all pages.
+        
+
+class datastore(object):
+    def __init__(self):
+        self.inventory = {}             # dictionary of inventory UIDs and the corresponding inventory object eg. {"12345":inventoryObject()}
+        self.unknownDocs = {}           # format = {"docInvID":[docObj1, docObj2]}
+        self.lastUpdated = time.time()
+        self.output = outputs()
+        global airtableURLFields
+        for x in retrieveRecordsFromAirtable(airtableURLFields):
+            if "Order Number" in x['fields']:
+                stockNo = x['fields']['Order Number']       # NOTE: Change from Order Number to Stock Number once applicable.
+                t = inventoryObject(stockNo)
+                t.airtableRefID = x['id']
+                t.specs = x['fields']
+                self.inventory[stockNo] = t
+            else:
+                appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
+
+    def addInvObjToInventory(self, newInvObj, source):
+        self.lastUpdated = time.time()
+        if newInvObj.uniqueIdentifier in self.inventory:
+            print("Inventory object exists: "+str(newInvObj.uniqueIdentifier))
+            oldInvObj = self.inventory[newInvObj.uniqueIdentifier]
+
+            # add documents from incoming inventory object to existing inventory object if they do not currently exist there
+            if newInvObj.documents != None:
+                for x in newInvObj.documents:
+                    # Compare between the new documents and the old documents, using a list of the contents of each page object's dictionary.
+                    found = False
+                    for y in oldInvObj.documents:
+                        for c in y.__dict__['pages']:
+                            for z in x.__dict__['pages']:
+                                if z.__dict__ == c.__dict__:
+                                    found = True
+                    if found == False:
+                        print("New doc added to inventory object: "+oldInvObj.uniqueIdentifier)
+                        oldInvObj.documents.append(x)
+            
+            # add incoming specs to existing inventory object
+            if newInvObj.specs != None:
+                if oldInvObj.specs == None:
+                    oldInvObj.specs = newInvObj.specs
+                else:
+                    oldInvObj.specs.update(newInvObj.specs)
+                self.output.send(oldInvObj, source)
+
+        else:
+            self.inventory[newInvObj.uniqueIdentifier] = newInvObj
+            self.output.send(self.inventory[newInvObj.uniqueIdentifier], source)
+            # print("Created Inventory object: "+str(newInvObj.uniqueIdentifier))
+                
+    
+    
+class PDFProcessingSettingsObj(object):
+    def __init__(self):
+        self.operations = ["Search", "Replace", "Findall", "Match", "Properties", "ReplaceList"]
+        self.fileData = {}  # Unprocessed settings
+        self.data = {}      # Settings with RegEx strings converted from a string to re.compile()
+        self.loadFromFile()
+        self.update()
+
+    def loadFromFile(self):
+        try:
+            time.sleep(.1)
+            with open(SettingsFolder+"pdfProcessingSettings.json", 'r') as clist:
+                self.fileData = json.load(clist)
+        except Exception as exc:        
+            appendToDebugLog("Could not update from pdfProcessingSettings.json", **{"Error":exc})
+
+    def update(self):
+        self.data = dict(self.fileData)
+        fields = set()
+        def recursiveUpdate(part, parent=0):
+            for name, value in part.items():
+                if parent == "Search" or parent == "Properties":
+                    fields.add(name)
+                if type(value) == dict and name not in ["Properties", "ignoreLists", "determineFileType", "ReplaceLists"]:
+                    if name == "Findall":
+                        recursiveUpdate(value, "Findall")
+                    elif name == "Search":
+                        recursiveUpdate(value, "Search")
+                    else:
+                        recursiveUpdate(value)
+                elif name not in self.operations and type(value) == str:
+                    if name == "Regex" and parent == "Findall":
+                        part[name] = re.compile(value, re.M)
+                    else:
+                        part[name] = re.compile(value, re.S)
+                elif name == "Properties":
+                    for x in value:
+                        fields.add(x)
+
+        recursiveUpdate(self.data)
+        
+        # Set the fields used for pulling data from Airtable to the ones we have defined in the processing settings,
+        # This is to ensure only editable fields get placed in the specs of an Inventory object
+        # otherwise we will encounter errors when outputting to Airtable.
+        global airtableURLFields
+        airtableURLFields = "?"+"&".join("fields%5B%5D={}".format(urllib.parse.quote(x)) for x in fields)
+
+
+
+class AirtableUpload(object):
+    def __init__(self):
+        self.entries = queue.Queue()
+        self.trigger = threading.Event()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+        self.thread.start()
+        self.lastSendTime = time.time()
+        self.updateList = []
+        self.postList = []
+
+    def send(self, entry):
+        self.entries.put(entry)
+        self.trigger.set()
+        self.trigger.clear()
+
+    def upload(self, sendType, content):
+        if sendType == "Patch":
+            response = requests.patch(airtableURL, data=None, json={"records":[ent.formatForAirtableUpdate() for ent in content]}, headers=AirtableAPIHeaders)
+        elif sendType == "Post":
+            response = requests.post(airtableURL, data=None, json={"records":[ent.formatForAirtableCreate() for ent in content]}, headers=AirtableAPIHeaders)
+
+        if response.status_code != 200
+            if len(content) == 1:
+                appendToDebugLog("Airtable upload failed.", **{"Error":response.text, "Request Type":sendType, "Order Number":content[0].stats["Order Number"]})
+            else:
+                for x in content:
+                    self.upload(sendType, [x])
+
+
+    def loop(self):
+        while True:
+            lprint("Airtable uploading process ready for entries to upload.")
+            if self.entries.qsize() == 0:
+                self.trigger.wait()
+            x = 0
+            while x < 10:
+                time.sleep(0.22)    # time between uploads to Airtable
+                if self.entries.qsize() > 0:
+                    x = 0
+                    try:
+                        update = []
+                        create = []
+                        while len(update) < 10 and len(create) < 10 and self.entries.qsize() > 0:
+                            z = self.entries.get()
+                            if z.airtableRefID:
+                                update.append(z)
+                            else:
+                                create.append(z)
+
+                        # Need to consolidate these two into a single function
+                        if len(update) > 0:
+                            self.upload("Patch", update)
+                            lprint("Uploaded to Airtable: "+str([ent.uniqueIdentifier for ent in update]))
+                        time.sleep(.2)
+                        if len(create) > 0:
+                            self.upload("Post", create)
+                            lprint("Created in Airtable: "+str([ent.uniqueIdentifier for ent in create]))
+
+
+                    except Exception as exc:
+                        appendToDebugLog("Something happened while retrieving data from the Airtable upload queue.", **{"Error":exc})
+
+                # Increment x if nothing left in the queue so we can eventually exit the loop once it's no longer useful to stay in it.
+                else:
+                    x += 1
+
+
+
+def getPDFText(filePath, pageToConvert=0):  # pageToConvert set to 0 will convert all pages.
     try:
-        fileText = subprocess.run([pdftotextExecutable, '-f', str(pageToConvert), '-l', str(pageToConvert), '-nopgbrk', '-simple', '-raw', filePath,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+        fileText = subprocess.run([pdftotextExecutable, '-f', str(pageToConvert), '-l', str(pageToConvert), '-simple', '-raw', filePath,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
     except Exception as exc:
-        # try:
-        #     os.remove(pdftotextExecutable)
-        #     downloadpdftotext()
-        # except Exception as exc:
-        #     print(exc)
         print("getPDFText() failed: ",str(exc))
         return "Error"
     return fileText
-        
 
-def runRegExMatching(content, regexlist):
-    columnHeader = regexlist[content[0]]
-    preppedData = {}
-    if len(columnHeader) > 1:                           # for each pair of header+regex, compute and add values to dictionary
-        for x in range(0,len(columnHeader),2):
-            search = re.search(columnHeader[x+1],content[1])
-            if search != None:
-                if len(search.groups()) > 0:            # if it contains one or more groups, create the entry and then append any extra groups to the value
-                    preppedData[columnHeader[x]] = search.group(1)
-                    if any(search.groups()):            # if anything was matched by a group (and didn't all return None)
-                        preppedData[columnHeader[x]] = str()
-                        for y in search.groups():
-                            if y != None:
-                                preppedData[columnHeader[x]] += y
-                    else:
-                        preppedData[columnHeader[x]] = content[1]
-    else:
-        preppedData[columnHeader[0]] = content[1]
-
-    return preppedData
-
-def writefile(string, filepath, extension):                 # write file for debugging
-    try:
-        a = open(filepath+extension, 'w')
-        a.write(str(string))
-        a.close()
-    except PermissionError:
-        print("Permission error.")
-    except FileExistsError:
-        print("File exists.")
-
-
-def postOrUpdate(content, sendType):
-    if sendType == "Post":
-        return requests.post(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
-    elif sendType == "Update":
-        return requests.patch(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
-
-
-def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
-    if enableAirtablePosts != True:
-        return "Airtable connection disabled."
-    x = postOrUpdate(content, sendType)
-    print("\nPost HTTP code:", x.status_code, "  |   Send type:",sendType)
-    if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
-        print("Success! Sent via "+sendType+"\n")
-        return "Success"
-    else:
-        return {'content':str(content), 'status code: ':str(x.status_code), 'failureText':str(json.loads(x.text)['error']['message'])}
-
-def retrieveRecordsFromAirtable(offset=None):
-    while True:
-        try:
-            # if enableAirtablePosts != True:
-            #     return "Airtable connection disabled."
-            if offset == None:
-                x = requests.get(airtableURL+airtableURLFields, data=None, headers=AirtableAPIHeaders)
-            else:
-                x = requests.get(airtableURL+airtableURLFields+"&offset="+offset, data=None, headers=AirtableAPIHeaders)
-
-            records = x.json()['records']
-            if 'offset' in json.loads(x.text):
-                records.extend(retrieveRecordsFromAirtable(json.loads(x.text)['offset']))
-            return records
-                
-        except ConnectionError:
-            print("Could not connect to airtable.com")
-            time.sleep(30)
-
-def updateAirtableRecordsCache():
-    writefile(json.dumps(retrieveRecordsFromAirtable()), mainFolder, 'listofrecords.json')
-
-def loadAirtableRecordsCache():
-    with open(mainFolder+'listofrecords.json', 'r') as cache:
-        x = str(cache.read())
-    return json.loads(x)
-
-def getRecord(orderNumber):
-    ListOfAirtableRecords = loadAirtableRecordsCache()
-    for x in ListOfAirtableRecords:
-        if "Order Number" in x['fields'] and x['fields']['Order Number'] == orderNumber:
-            return x
+def getPDFsInFolder(folderLocation):
+    filesInFolder = []
+    for filename in os.listdir(folderLocation):
+        if str(filename)[-3:] == 'pdf':
+            filesInFolder.append([folderLocation, filename])
+    return filesInFolder
 
 
 def appendToDebugLog(errormsg,**kwargs):
@@ -501,6 +385,113 @@ def appendToDebugLog(errormsg,**kwargs):
             requests.post(slackURL,json={'text':errordata},headers={'Content-type':'application/json'})
     except:
         print("Could not post to Slack!")
+
+
+def lprint(st):     # NOTE: Worth it to use for all print statements?
+    lock.acquire()
+    print(st)
+    lock.release()
+
+
+def retrieveRecordsFromAirtable(airtableURLFields="", offset=None):
+    while True:
+        try:
+            # if enableAirtablePosts != True:
+            #     return "Airtable connection disabled."
+            if offset == None:
+                x = requests.get(airtableURL+airtableURLFields, data=None, headers=AirtableAPIHeaders)
+            else:
+                x = requests.get(airtableURL+airtableURLFields+"{}offset={}".format("?" if airtableURLFields == "" else "&", offset), data=None, headers=AirtableAPIHeaders)
+
+            records = x.json()['records']
+            if 'offset' in json.loads(x.text):
+                records.extend(retrieveRecordsFromAirtable(offset=json.loads(x.text)['offset']))
+            return records
+                
+        except ConnectionError:
+            print("Could not connect to airtable.com")
+            time.sleep(30)
+
+def PDFSplitter(pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
+    pageGroups = {None:[]}  # Pages with no uniqueIdentifier will go to the None entry, where they will be added to an ErroredPages.pdf file and appended to the debug log
+    while True:
+        try:
+            with open(pdfLocation+pdfFilename, 'rb') as do:
+                docstream = do.read()
+                break
+        except:
+            print("Attempted to access file too early. Waiting one second.")
+            time.sleep(1)
+    doc = fitz.open(stream=docstream, filetype="pdf")
+
+    # Create a list of page objects for each page found
+    pdfPageList = [page(x) for x in getPDFText(pdfLocation+pdfFilename).split('\f')[:-1]]  #last entry will always be empty, as the document will always end with a \f value (formfeed character)
+    print("Done making page objects from pdftotext.exe")
+    ctime = time.time()
+
+    # Error out if the number of pages found between PyMuPDF and pdftotext.exe do not match.
+    if doc.pageCount != len(pdfPageList):
+        appendToDebugLog("Number of page objects does not equal number of pages found after text conversion", **{"Document":pdfLocation+pdfFilename})
+        return
+
+    # if self.inDebugFolder == True:
+    #     return
+
+    # Create page groups from page invoice numbers
+    docs = {None:[]}
+    for pdfPageNum, pdfPage in enumerate(pdfPageList):
+        if pdfPage.invoiceNumber in pageGroups:
+            pageGroups[pdfPage.invoiceNumber].addPage(pdfPage)
+            docs[pdfPage.invoiceNumber].insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
+        else:
+            y = document(pdfPage)
+            y.invoiceNumber = pdfPage.invoiceNumber
+            y.docType = pdfPage.getPageType()
+            y.location = str(splitLocation+y.docType+" - "+y.invoiceNumber.replace('/','')+".pdf")
+            pageGroups[pdfPage.invoiceNumber] = y
+
+            z = fitz.open()
+            z.insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
+            docs[pdfPage.invoiceNumber] = z
+
+            
+    print("Now writing invoices.")
+    # Write problem pages to the Errored Pages pdf.
+    if len(pageGroups[None]) > 0:
+        print("Errored pages!")
+        ErroredPagesPDF = fitz.open(DebugFolder+"Errored Pages.pdf")
+        ErroredPagesPDF.insertPDF(docs[None])
+        ErroredPagesPDF.saveIncr()
+
+    # Remove entry for problem pages
+    pageGroups.pop(None)
+    docs.pop(None)
+
+    # Write PDFs from page groups.
+    def writePDFfromSplitter(doc, location):
+        attempt = 0
+        while True:
+            try:
+                doc.save(location)
+                doc.close()
+                break
+            except Exception as exc:
+                attempt += 1
+                if attempt > 10:
+                    appendToDebugLog("Couldn't save after 10 attempts.", **{"Location":location, "Error":exc})
+                time.sleep(1)
+                print("Error saving: "+location)
+    writethreads = [threading.Thread(target=(writePDFfromSplitter), args=([docs[z], pageGroups[z].location])) for z in docs]
+    for thread in writethreads:
+        thread.start()
+    for thread in writethreads:
+        thread.join()
+
+    # Send document objects back to main() so inventory objects can be created and sent to the database.
+    print("Time taken to split PDF after pdftotext.exe: "+str(time.time()-ctime))
+    doc.close()
+    return pageGroups
+
 
 
 def moveToFolder(oldFolder, oldName, newFolder, newName=None):
@@ -520,102 +511,26 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
         print(oldName+" not found.")
         pass
 
+
 def startProcessing(x):
-    if len(x) == 0:
-        return "No files to process."
-    pdfFileLocation = x[0]
-    pdfFile = x[1]
-    start_time = time.time()
-    attempts = 0
-    while True:                     # Check if file can be accessed (which means it's done being written to the folder)
-        try:
-            with open(pdfFileLocation+pdfFile, 'rb') as openTest:
-                assert openTest.read() != ''     # If it can be read in full (and finds the EOF marker) then it will continue. Otherwise, it will error here and loop again.
-                break
-        except:
-            attempts += 1
-            if attempts > 120:
-                raise Exception('Could not open file after 120 attempts (over one minute)')
-            time.sleep(.5)
-
-    pdf = document(pdfFileLocation, pdfFile)
-    
-    # print(pdf.orderNumber, pdf.records)
-
-    if pdf.containsMultipleInvoices == True:
-        pdf.splitPDF()
-        print("Compute time: ", str(time.time()-start_time))
-        return
-    elif pdf.inDebugFolder == True or enableAirtablePosts != True:             # if it came from the debug folder, move to Done without uploading to Airtable
-        moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
-        print("Compute time: ", str(time.time()-start_time))
-    else:
-        # return pdf.records        # return records to main function, so they can be sent to an upload function to be grouped and uploaded (and returned if failed)
-        if pdf.orderNumber != None and len(pdf.records['records']) != 0:
-            upload = uploadDataToAirtable(pdf.records, pdf.sendType)
-            if upload == "Success":
-                moveToFolder(pdfFileLocation, pdf.fileName, DoneFolder) 
-            else:
-                appendToDebugLog("Could not upload to Airtable. ", **{"Order Number":pdf.orderNumber, "Error Message":upload['failureText']})
-                writefile("Sent data content: "+upload['content'], DebugFolder, pdf.fileName[:-4]+" (debug-uploadcontent).txt")
-                moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder) 
-            print("Compute time: ", str(time.time()-start_time))
-            return True
-        else:
-            moveToFolder(pdfFileLocation, pdf.fileName, ErroredFolder)
-            appendToDebugLog("Could not process file.", **{"File Name":pdf.fileName, "File Type":pdf.fileType, "Records":pdf.records})
-
-def getPDFsInFolder(folderLocation):
-    filesInFolder = []
-    for filename in os.listdir(folderLocation):
-        if str(filename)[-3:] == 'pdf':
-            filesInFolder.append([folderLocation, filename])
-    return filesInFolder
-
-def isdir(x):
-    return Path(pdfFolderLocation+x).is_dir()
-
-def makedir(x):
-    return Path(pdfFolderLocation+x).mkdir()
-
-class initialize():
-
-    @staticmethod
-    def Folder_Check():
-        try:                                                    # create folders if they don't exist
-            dirlist = ['Debug','Done','Errored','Suspended','Unsplit TRKINV']   
-            if isdir(''):
-                for x in dirlist:
-                    if isdir(x) != True:
-                        makedir(x)
-            # if Path(pdftotextExecutable).exists() != True:
-            #     downloadpdftotext()
-            # elif Path(pdftotextExecutable).touch() != True:
-            #     appendToDebugLog('Cannot access pdftotext.exe!')
-            #     os.remove(pdftotextExecutable)
-            #     return False
-            return True
-        except Exception as exc:
-            print("Folder_Check() failed: ",exc.args)
-            return False
-    
-    @staticmethod
-    def pdftotext_Check():
-        print("Downloading pdftotext")
-            
-
+    return PDFSplitter(x[0], x[1])
 
 def main(pool):
     try:
-        if initialize.Folder_Check() != True:
-            print("Folder check failed")
-            raise Exception("Folder check failed")
+        # if initialize.Folder_Check() != True:
+        #     print("Folder check failed")
+        #     raise Exception("Folder check failed")
+        
 
-        updateAirtableRecordsCache()
+        # NOTE: need initialization phase to populate internal database and ensure folder structure and all necessary files exist
+        # NOTE: need reconciliation phase to ensure all outputs contain the latest data
+
+        db = datastore()
+        print(db.inventory['19020848'].specs)
+
         flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
         directoryHandle = win32file.CreateFile(pdfFolderLocation, 0x0001,win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
         startTime = time.localtime()
-        initialCheckinTimeConverted = int(float((86400-(startTime.tm_hour*60*60+startTime.tm_min*60+startTime.tm_sec)+CheckinHour)*10000000))
         timerHandle = win32event.CreateWaitableTimer(None, True, None)
         win32event.SetWaitableTimer(timerHandle, int(0-initialCheckinTimeConverted), 0, None, None, True)
         overlapped = pywintypes.OVERLAPPED()
@@ -624,54 +539,58 @@ def main(pool):
 
         print("Waiting for files.")
 
-        lastCheckTime = 0
-        conversionlistsOK = True
         hasTimedOut = False
         while True:
-
             if hasTimedOut == False:
                 win32file.ReadDirectoryChangesW(directoryHandle, buffer, True, flags, overlapped)
 
-            # MultipleObjects so that you can use individual folders. WaitForSingleObject/WaitForMultipleObjects will work as well.
-            # Just use WAIT_OBJECT_0 for the first overlapped.hEvent, WAIT_OBJECT_0+1 for the 2nd, 0+2 for the 3rd, etc.
             rc = win32event.MsgWaitForMultipleObjects([overlapped.hEvent, timerHandle], False, readDirTimeout, win32event.QS_ALLEVENTS)
             if rc == win32event.WAIT_TIMEOUT:
-                hasTimedOut = True      # apparently simply reassigning is faster than checking value and assigning if it did not match
+                hasTimedOut = True
                 print(time.ctime(),' Wait timeout.')
                 pool.imap_unordered(startProcessing, getPDFsInFolder(pdfFolderLocation))
-
             elif rc == win32event.WAIT_OBJECT_0:
                 hasTimedOut = False
                 result = win32file.GetOverlappedResult(directoryHandle, overlapped, True)
                 if result:
                     bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, result)
-                    #print(bits)
                     for x, filename in bufferData:
                         print('Change found: '+filename)
-                        if 'conversionlists.py' in filename:
-                            if time.time() - lastCheckTime < .5:
-                                break
-                            lastCheckTime = time.time()
-                            conversionlistsCheck = var.update()
-                            if conversionlistsCheck == True:
-                                conversionlistsOK = True
-                                print("conversionlists.py working.")
-                                pool.imap_unordered(startProcessing, getPDFsInFolder(pdfFolderLocation))
-                            elif type(conversionlistsCheck) == SyntaxError:
-                                conversionlistsOK = False
-                                appendToDebugLog("Error in conversionlists.py! Did you forget a comma, bracket, brace, or apostrophy on line "+str(int(conversionlistsCheck.args[1][1])-1)+" or "+str(int(conversionlistsCheck.args[1][1]))+"?")
-                                break
-                            else:
-                                appendToDebugLog('Error with conversionlists.py!', **{"Exception Type":type(conversionlistsCheck), "Details":conversionlistsCheck.args})
-                                break
-                        if conversionlistsOK == True and x == 1 and filename[-3:] == 'pdf':
-                            fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
-                            if '\\' not in filename:
-                                pool.imap_unordered(startProcessing, [[fileloc, filename]])
-                            elif filename[:5] == 'Debug':
-                                pool.imap_unordered(startProcessing, [[fileloc, filename[6:]]])
+
+                        fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
+                        if x == 1 and filename[-3:] == 'pdf' and '\\' not in filename:
+                            docs = list(item for item in pool.imap_unordered(startProcessing, [[fileloc, filename]]))[0].values()
+                            
+                            for y in docs:
+                                specs = y.getSpecs()
+                                if "Order Number" in specs:
+                                    z = inventoryObject(specs["Order Number"])
+                                    z.documents.append(y)
+                                    z.specs = specs
+                                    db.addInvObjToInventory(z, "document")
+                                elif y.docType == "Supplement":
+                                    if "ID" in specs and "Model" in specs:
+                                        UID = str(specs["Model"]+specs["ID"])
+                                        matchFound = False
+                                        for invObj in db.inventory.values():
+                                            if "VIN" in invObj.specs and "Model" in invObj.specs:
+                                                if str(invObj.specs["Model"]+invObj.specs["VIN"][-6:]) == UID:
+                                                    print("UID Matched!")
+                                                    invObj.documents.append(y)
+                                                    matchFound = True
+                                                    break
+                                        if matchFound == False:
+                                            print("UID Match not found for "+UID)
+                                            if UID in db.unknownDocs:
+                                                db.unknownDocs[UID].append(y)
+                                            else:
+                                                db.unknownDocs[UID] = [y]
+
+                            # Move original PDF away
+                            moveToFolder(fileloc, filename, OriginalDocsFolder)
                 else:
                     print('dir handle closed  ')
+
             elif rc == win32event.WAIT_OBJECT_0+1:
                 win32event.SetWaitableTimer(timerHandle, int(0-TimeBetweenCheckins), 0, None, None, True)    # sets of 100 nanoseconds. -10,000,000 = 1 second
                 print("Checking in!       ")
@@ -679,18 +598,10 @@ def main(pool):
                     requests.post(slackURL,json={'text':"{}: Checking-in.".format(time.strftime("%a, %b %d"))},headers={'Content-type':'application/json'})
 
             print('Watching for files.', end='\r')
-# recordcompilation.addRecords(x for x in threads)
-# if recordcompilation.send() == False:
-#       for x in threads:
-#           y = recordcompilation.sendRecord(x)
-#           if y != True:
-#               movetofolder(originFile(x), "Errored")
-
     except Exception as exc:
         print("main() failed: ",str(exc.args))
 
-
-var = convlists()
+pdfProcessingData = PDFProcessingSettingsObj()
 
 if __name__ == "__main__":
     p = multiprocessing.Pool()
