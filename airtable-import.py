@@ -308,7 +308,7 @@ class AirtableUpload(object):
         elif sendType == "Post":
             response = requests.post(airtableURL, data=None, json={"records":[ent.formatForAirtableCreate() for ent in content]}, headers=AirtableAPIHeaders)
 
-        if response.status_code != 200
+        if response.status_code != 200:
             if len(content) == 1:
                 appendToDebugLog("Airtable upload failed.", **{"Error":response.text, "Request Type":sendType, "Order Number":content[0].stats["Order Number"]})
             else:
