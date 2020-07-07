@@ -1,0 +1,95 @@
+* {
+    font-family: Verdana;
+}
+
+
+body {
+    margin: 0;
+    background: rgb(255, 255, 255);
+}
+
+#top {
+    overflow: hidden;
+    border-bottom: 3px solid lightslategray;
+    text-decoration: none;
+    background: rgb(226, 226, 226);
+}
+  
+#top .left{
+    float: left;
+    display: block;
+    color: black;
+    margin: 0;
+    text-align: center;
+    padding-left: 1%;
+    text-decoration: none;
+}
+  
+#top .right{
+    float: right;
+    display: block;
+    color: black;
+    margin: 0;
+    text-align: center;
+    padding-right: 1%;
+    padding-top: 15px;
+    text-decoration: none;
+}
+
+#nav {
+    background-color: rgb(140, 222, 233);
+    border-bottom: 3px solid lightslategray;
+    padding-left: 20px;
+}
+
+#nav ul {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    vertical-align: bottom;
+}
+
+#nav a {
+    float: left;
+    display: block;
+    color: black;
+    text-align: center;
+    padding: 10px 20px;
+    text-decoration: none;
+  }
+#nav a:hover {
+    background-color: rgb(67, 105, 110);
+    color: white;
+    border-top-right-radius: 5px;
+    border-top-left-radius: 5px;
+  }
+
+
+.title {
+    text-align: center;
+}
+
+
+
+#log_content {
+    margin: 1% 5%;
+    width: 90%;
+    border: 1px solid black;
+    counter-reset: row-num;
+}
+#log_content tr td:first-child{
+    width: 2%;
+    counter-increment: row-num;
+}
+#log_content tr td:first-child::before {
+    content: counter(row-num) ".   ";
+}
+
+#log_content tr:nth-child(even) {
+    background-color: #eee;
+}
+#log_content tr:nth-child(odd) {
+    background-color: #fff;
+}
+

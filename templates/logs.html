@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="title">
+    <h1>Logs</h1>
+</div>
+<table id="log_content"></table>
+<script type="text/javascript" charset="utf-8">
+    var socket = io();
+    console.log("Connected");
+    socket.emit("loadlogs");
+    socket.on('addlog', function(msg) {
+        $('#log_content').append('<tr><td></td><td>'+msg+'</td></tr>');
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,29 @@
+<!doctype html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Processor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" type="text/css">
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.1.1/socket.io.js"></script>
+</head>
+<body>
+  <div id="top">
+    <div class="page_title">
+      <a href="./" class="left"><h2>PDF Processing Program Settings</h2></a>
+    </div>
+    <div class="page_title">
+      <a href="./Login" class="right">Login</a>
+    </div>
+  </div>
+
+  <div id="nav">
+    <ul class="no-bullets">
+      <li><a href="logs">Logs</a></li>
+      <li><a href="settings">Program Settings</a></li>
+      <li><a href="pdfsettings">Processing Settings</a></li>
+      <li><a href="status">Status</a></li>
+    </ul>
+  </div>
+  {% block content %}{% endblock %}
+</body>
