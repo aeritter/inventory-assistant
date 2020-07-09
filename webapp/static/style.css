@@ -78,6 +78,10 @@ body {
     border: 1px solid black;
     counter-reset: row-num;
 }
+#log_content tr td {
+    margin: 0;
+    white-space: pre-wrap;
+}
 #log_content tr td:first-child{
     width: 2%;
     counter-increment: row-num;

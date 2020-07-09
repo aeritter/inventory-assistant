@@ -8,7 +8,7 @@
     var socket = io();
     console.log("Connected");
     socket.emit("loadlogs");
-    socket.on('addlog', function(msg) {
+    socket.on('addToLog', function(msg) {
         $('#log_content').append('<tr><td></td><td>'+msg+'</td></tr>');
     });
 </script>
