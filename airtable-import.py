@@ -121,50 +121,60 @@ class document(object):
         self.pages.append(pageClass)
 
     def getSpecs(self):
-        specs = {}
         text = self.getText()
 
         def findSpecsRecursively(section, txt, parent=0):
-            for name, value in section.items():
-                if name == "Properties" and type(value) == dict:
-                    specs.update(section[name])
-                elif name == "Search":
-                    if type(value) == str:
-                        # findSpecsRecursively(pdfProcessingData.data["SearchLists"][value], txt)
-                        pass
-                    elif type(value) == dict:
-                        findSpecsRecursively(value, txt, name)
-                
-                elif name == "Findall":
-                    if type(value) == dict:
-                        result = value["Regex"].findall(txt, re.M)
-                        matchlist = pdfProcessingData.data["MatchLists"][value["Match"]]
-                        for x in result:
-                            if x[0] in matchlist:
-                                findSpecsRecursively(matchlist[x[0]], x[1])
-                else:
-                    if value == 1:
-                        specs[name] = txt
-                    elif type(value) == dict and "Replace" in value:
-                        result = value["Replace"]["Regex"].search(txt)
-                        replacementList = pdfProcessingData.data["ReplaceLists"][value["Replace"]["ReplaceList"]]
-                        if result != None and len(result.groups()) > 0:
-                            if result.group(1) in replacementList:
-                                specs[name] = replacementList[result.group(1)]
-
-
+            specs = {}
+            # Fits my dataset, but likely missing parts that should work for other datasets (ex. using multiline regex with both a Match and a Search)
+            # Need to better define process priority.
+            if "Defaults" in section:
+                specs.update(section["Defaults"])
+            if "Search" in section:
+                value = section["Search"]
+                if type(value) == str:
+                    if value not in pdfProcessingData.data["SearchLists"]:
+                        appendToDebugLog("pdfProcessingSettings missing entry in SearchLists.", **{"List name":value})
                     else:
-                        result = value.search(txt)
+                        for x in pdfProcessingData.data[value]:
+                            specs.update(findSpecsRecursively(x, txt))
+                elif type(value) == list:
+                    for x in value:
+                        specs.update(findSpecsRecursively(x, txt))
+            if "Regex" in section:
+                if "Multiline" in section and section["Multiline"] == 1:
+                    result = section["Regex"].findall(txt)
+                    if "Match" in section:
+                        if type(section["Match"]) == str and section["Match"] in pdfProcessingData.data["MatchLists"]:
+                            for x in result:
+                                if x[0] in pdfProcessingData.data["MatchLists"][section["Match"]]:
+                                    for y in pdfProcessingData.data["MatchLists"][section["Match"]][x[0]]:
+                                        specs.update(findSpecsRecursively(y, x[1]))
+                    #elif 
+                if "Category" in section:
+                    if section["Regex"] == 1:
+                        result = txt
+                    elif type(section["Regex"]) == re.Pattern:
+                        result = section["Regex"].search(txt)
                         if result != None and len(result.groups()) > 0:
-                            specs[name] = result.group(1)
+                            result = result.group(1)
+                        else:
+                            return specs
+                    if "Replace" in section:
+                        if type(section["Replace"]) == str and section["Replace"] in pdfProcessingData.data["ReplaceLists"]:
+                            if result in pdfProcessingData.data["ReplaceLists"][section["Replace"]]:
+                                result = pdfProcessingData.data["ReplaceLists"][section["Replace"]][result]
+                        elif type(section["Replace"]) == dict:
+                            if result in section["Replace"]:
+                                result = section["Replace"][result]
+                    specs[section["Category"]] = result
+            return specs
 
         if self.docType in pdfProcessingData.data["fileTypes"]:
             procSet = pdfProcessingData.data["fileTypes"][self.docType]
             try:
-                findSpecsRecursively(procSet, text)
+                return findSpecsRecursively(procSet, text)
             except Exception as exc:
                 appendToDebugLog("Could not find specs, something went wrong.", **{"Error":exc})
-        return specs
 
 
 
@@ -257,27 +267,33 @@ class PDFProcessingSettingsObj(object):
     def update(self):
         self.data = dict(self.fileData)
         fields = set()
-        def recursiveUpdate(part, parent=0):
-            for name, value in part.items():
-                if parent == "Search" or parent == "Properties":
-                    fields.add(name)
-                if type(value) == dict and name not in ["Properties", "ignoreLists", "determineFileType", "ReplaceLists"]:
-                    if name == "Findall":
-                        recursiveUpdate(value, "Findall")
-                    elif name == "Search":
-                        recursiveUpdate(value, "Search")
-                    else:
+        def recursiveUpdate(part):
+            if type(part) == list:
+                for x in part:
+                    recursiveUpdate(x)  
+            elif type(part) == dict:
+                for name, value in part.items():
+                    if name == "Defaults":
+                        for x in value:
+                            fields.add(x)
+                    elif name == "Category":
+                        fields.add(value)
+                    elif name == "Regex" and type(value) == str:
+                        if "Multiline" in part.keys() and part["Multiline"] == 1:
+                            part[name] = re.compile(value, re.M)
+                        else:
+                            part[name] = re.compile(value, re.S)
+                    elif name == "Search" and type(value) == list:
                         recursiveUpdate(value)
-                elif name not in self.operations and type(value) == str:
-                    if name == "Regex" and parent == "Findall":
-                        part[name] = re.compile(value, re.M)
-                    else:
-                        part[name] = re.compile(value, re.S)
-                elif name == "Properties":
-                    for x in value:
-                        fields.add(x)
+                    elif name == "Match" and type(value) == dict:
+                        for x in value:
+                            recursiveUpdate(value[x])
 
-        recursiveUpdate(self.data)
+        for x in self.data["fileTypes"].values():
+            recursiveUpdate(x)
+        for x in self.data["MatchLists"].values():
+            for y in x.values():
+                recursiveUpdate(y)
         
         # Set the fields used for pulling data from Airtable to the ones we have defined in the processing settings,
         # This is to ensure only editable fields get placed in the specs of an Inventory object
@@ -526,7 +542,6 @@ def main(pool):
         # NOTE: need reconciliation phase to ensure all outputs contain the latest data
 
         db = datastore()
-        print(db.inventory['19020848'].specs)
 
         flags = win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE
         directoryHandle = win32file.CreateFile(pdfFolderLocation, 0x0001,win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE, None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED, None)
@@ -556,10 +571,10 @@ def main(pool):
                 if result:
                     bufferData = win32file.FILE_NOTIFY_INFORMATION(buffer, result)
                     for x, filename in bufferData:
-                        print('Change found: '+filename)
 
                         fileloc = pdfFolderLocation+filename[:-len(filename.split("\\")[-1])]
                         if x == 1 and filename[-3:] == 'pdf' and '\\' not in filename:
+                            print('File found, processing: '+filename)
                             docs = list(item for item in pool.imap_unordered(startProcessing, [[fileloc, filename]]))[0].values()
                             
                             for y in docs:
