@@ -81,24 +81,17 @@ class page(object):
             print("Couldn't find invoice num")
             print("First 3 lines:")
             print(self.text.split('\n', 3))
-    def getPageType(self):                                      #NOTE: needs refining, separate out into changable variables: lines = list(self.text.readlines()), for x in variables: if x["lineContent"] in lines[x["lineNumber"]-1]: return x["Type"]
-        if self.text.count('\n') > 5:
-            line1 = self.text.split('\n', 1)[0]                 # first line of .txt file
-            line2 = self.text.split('\n', 2)[1]                 # second line of .txt file
-            line5 = self.text.split('\n', 5)[4]                 # 5th line
-            if "Welcome to Volvo" in line1:
-                return "Volvo Order"
-            elif "GSO:" in line2:
-                return "Mack Order"
-            elif "CREDIT MEMO" in line2:
-                return "Credit Memo"
-            elif "SUPPLEMENT" in line5:
-                return "Supplement"
-            elif "MACK TRUCKS, INC." in line1:
-                return "Mack Invoice"
-            elif "PAGE 1" in line1 or "PAGE  1" in line1 or "PAGE   1" in line1:
-                return "Volvo Invoice"
-        # use regex to determine page type, make sure it only matches the first page in a group
+    def getPageType(self):
+        lines = self.text.split('\n', pdfProcessingData.maxGuideNumber)
+        numOfLines = len(lines)
+        fileTypes = pdfProcessingData.data["fileTypes"]
+        for x in fileTypes:
+            lineNumber = fileTypes[x]["Guide"][0]
+            if "Guide" in fileTypes[x] and lineNumber <= numOfLines:
+                for identifier in fileTypes[x]["Guide"][1:]:
+                    if identifier in lines[lineNumber-1]:
+                        return x
+
 
 class document(object):
     def __init__(self, pageClass):
@@ -251,8 +244,9 @@ class datastore(object):
 class PDFProcessingSettingsObj(object):
     def __init__(self):
         self.operations = ["Search", "Replace", "Findall", "Match", "Properties", "ReplaceList"]
-        self.fileData = {}  # Unprocessed settings
-        self.data = {}      # Settings with RegEx strings converted from a string to re.compile()
+        self.fileData = {}          # Unprocessed settings
+        self.data = {}              # Settings with RegEx strings converted from a string to re.compile()
+        self.maxGuideNumber = 0     # For limiting text splitting when determining file type.
         self.loadFromFile()
         self.update()
 
@@ -288,6 +282,8 @@ class PDFProcessingSettingsObj(object):
                     elif name == "Match" and type(value) == dict:
                         for x in value:
                             recursiveUpdate(value[x])
+                    elif name == "Guide" and value[0] > self.maxGuideNumber:
+                        self.maxGuideNumber = value[0]
 
         for x in self.data["fileTypes"].values():
             recursiveUpdate(x)
