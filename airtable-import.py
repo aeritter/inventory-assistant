@@ -1,12 +1,9 @@
-version = '1.0.0'
+version = '1.0.1'
 
 import re, os.path, subprocess, time, importlib, sys, urllib.parse
 import win32file, win32con, win32event, win32net, pywintypes        # watchdog can probably replace all these (pip install watchdog)
 import json, requests, multiprocessing, threading, queue, configparser
 import fitz # fitz = PyMuPDF
-from PyPDF2 import PdfFileReader as PDFReader 
-from PyPDF2 import PdfFileWriter as PDFWriter
-from PyPDF2 import pdf as pdfObj
 from pathlib import Path
 
 lock = threading.Lock()
@@ -69,6 +66,7 @@ class outputs(object):
 class page(object):
     def __init__(self, text):
         self.text = text
+        self.invoiceNumber = None
         try:
             search = reSearchInvoiceNum.search(self.text)
             if search != None:
@@ -425,7 +423,7 @@ def retrieveRecordsFromAirtable(airtableURLFields="", offset=None):
             time.sleep(30)
 
 def PDFSplitter(pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
-    pageGroups = {None:[]}  # Pages with no uniqueIdentifier will go to the None entry, where they will be added to an ErroredPages.pdf file and appended to the debug log
+    pageGroups = {}  # Pages with no uniqueIdentifier will go to the None entry, where they will be added to an ErroredPages.pdf file and appended to the debug log
     while True:
         try:
             with open(pdfLocation+pdfFilename, 'rb') as do:
@@ -450,7 +448,7 @@ def PDFSplitter(pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
     #     return
 
     # Create page groups from page invoice numbers
-    docs = {None:[]}
+    docs = {}
     for pdfPageNum, pdfPage in enumerate(pdfPageList):
         if pdfPage.invoiceNumber in pageGroups:
             pageGroups[pdfPage.invoiceNumber].addPage(pdfPage)
@@ -459,7 +457,7 @@ def PDFSplitter(pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
             y = document(pdfPage)
             y.invoiceNumber = pdfPage.invoiceNumber
             y.docType = pdfPage.getPageType()
-            y.location = str(splitLocation+y.docType+" - "+y.invoiceNumber.replace('/','')+".pdf")
+            y.location = str(splitLocation+str(y.docType)+" - "+str(y.invoiceNumber).replace('/','')+".pdf")
             pageGroups[pdfPage.invoiceNumber] = y
 
             z = fitz.open()
@@ -469,15 +467,18 @@ def PDFSplitter(pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
             
     print("Now writing invoices.")
     # Write problem pages to the Errored Pages pdf.
-    if len(pageGroups[None]) > 0:
+    if None in pageGroups:
         print("Errored pages!")
-        ErroredPagesPDF = fitz.open(DebugFolder+"Errored Pages.pdf")
-        ErroredPagesPDF.insertPDF(docs[None])
-        ErroredPagesPDF.saveIncr()
+        if os.path.exists(DebugFolder+"Errored Pages.pdf"):
+            ErroredPagesPDF = fitz.open(DebugFolder+"Errored Pages.pdf")
+            ErroredPagesPDF.insertPDF(docs[None])
+            ErroredPagesPDF.saveIncr()
+        else:
+            docs[None].save(DebugFolder+"Errored Pages.pdf")
 
-    # Remove entry for problem pages
-    pageGroups.pop(None)
-    docs.pop(None)
+        # Remove entry for problem pages
+        pageGroups.pop(None)
+        docs.pop(None)
 
     # Write PDFs from page groups.
     def writePDFfromSplitter(doc, location):
