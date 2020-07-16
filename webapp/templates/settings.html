@@ -1,4 +1,41 @@
 {% extends 'base.html' %}
 {% block content %}
-    <h1>Program Settings test!</h1>
+<div class="title">
+    <h1>Settings</h1>
+</div>
+<div class="container">
+    <form>
+        {% for section in sections recursive %}
+            <h3>{{section.title}}</h3>
+            <hr>
+            <br>
+                {% for setting in section.content %}
+                    <div class="row">
+                        <div class="col-75">
+                            {{setting.description}}
+                            
+                        </div>
+                        <div class="col-25">
+                            {% if setting.type == "toggle" %}
+                            <div class="switch">
+                                <input type="checkbox" name="{{setting.name}}" id="{{setting.name}}" tabindex="0" checked>
+                                <label class="toggle" for="{{setting.name}}"></label>
+                            </div>
+                            {% endif %}
+                            {% if setting.type == "textbox" %}
+                            <div class="tbox">
+                                <input type="text">
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            <br>
+            <br>
+        {% endfor %}
+    </form>
+    
+</div>
+
+
 {% endblock %}

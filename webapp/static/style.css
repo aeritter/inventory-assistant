@@ -43,16 +43,16 @@ body {
 }
 
 #nav ul {
+    display: flex;
+    flex-direction: row;
     list-style-type: none;
     margin: 0;
-    padding: 0;
+    padding: 10px 20px;
     overflow: hidden;
     vertical-align: bottom;
 }
 
 #nav a {
-    float: left;
-    display: block;
     color: black;
     text-align: center;
     padding: 10px 20px;
@@ -61,8 +61,6 @@ body {
 #nav a:hover {
     background-color: rgb(67, 105, 110);
     color: white;
-    border-top-right-radius: 5px;
-    border-top-left-radius: 5px;
   }
 
 
@@ -97,3 +95,78 @@ body {
     background-color: #fff;
 }
 
+/* Settings page */
+
+.switch {
+    position: relative; width: 55px;
+    -webkit-user-select:none; -moz-user-select:none; -ms-user-select: none;
+}
+input[type=checkbox] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.toggle {
+    display: block; overflow: hidden; cursor: pointer;
+    height: 20px; padding: 0; line-height: 20px;
+    border: 0px solid #FFFFFF; border-radius: 30px;
+    background-color: #9E9E9E;
+}
+.toggle:before {
+    content: "";
+    display: block; width: 30px; margin: -5px;
+    background: #FFFFFF;
+    position: absolute; top: 0; bottom: 0;
+    right: 31px;
+    border-radius: 30px;
+    box-shadow: 0 6px 12px 0px #757575;
+}
+input[type=checkbox]:checked + .toggle {
+    background-color: #42A5F5;
+}
+input[type=checkbox]:checked + .toggle, input[type=checkbox]:checked + .toggle:before {
+   border-color: #42A5F5;
+}
+input[type=checkbox]:checked + .toggle .onoffswitch-inner {
+    margin-left: 0;
+}
+input[type=checkbox]:checked + .toggle:before {
+    right: 0px; 
+    background-color: #2196F3; 
+    box-shadow: 3px 6px 18px 0px rgba(0, 0, 0, 0.2);
+}
+
+
+.container {
+    width: 1200px;
+    max-width: 70%;
+    margin: 0 auto;
+    border-radius: 5px;
+    background-color: #f2f2f2;
+    padding: 20px;
+    text-align: left;
+}
+
+.row {
+    padding-bottom: 20px;
+}
+
+.col-25 {
+    display: inline-flex;
+    float: right;
+    width: 25%;
+}
+
+.col-75 {
+    display: inline-flex;
+    float: left;
+    text-align: left;
+    width: 70%;
+    margin-left: 5%;
+}
+
+.row:after {
+    content: "";
+    display: table;
+    clear: both;
+}

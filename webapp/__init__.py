@@ -6,9 +6,9 @@ socketio = SocketIO()
 def webapp():
     app = Flask(__name__)
 
-    import logging
-    log = logging.getLogger('werkzeug')
-    log.setLevel(logging.ERROR)
+    # import logging
+    # log = logging.getLogger('werkzeug')
+    # log.setLevel(logging.ERROR)
 
     @app.route("/")
     def home():
@@ -27,7 +27,23 @@ def webapp():
 
     @app.route("/settings")
     def settings():
-        return render_template('settings.html')
+        sections=(
+            {
+                "title":"Switches",
+                "content":(
+                    {"description":"Slack Notifications", "name":"Slack", "type":"toggle"},
+                    {"description":"Airtable Posts", "name":"Airtable", "type":"toggle"},
+                    {"description":"Debug Messages", "name":"Debug", "type":"toggle"}
+            )},
+            {
+                "title":"Check-in",
+                "content":(
+                    {"description":"Enable Slack daily check-in", "name":"Check-in", "type":"toggle"},
+                    {"description":"Initial hour of the day to check-in (upon program startup)", "name":"Check-in hour", "type":"textbox"},
+                    {"description":"Time between check-ins (in minutes)", "name":"Check-in minutes", "type":"textbox"}
+            )}
+            )
+        return render_template('settings.html', sections=sections)
 
 
     @app.route("/pdfsettings")

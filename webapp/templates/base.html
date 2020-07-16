@@ -6,6 +6,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" type="text/css">
   <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.1.1/socket.io.js"></script>
+  {% block head %}{% endblock %}
 </head>
 <body>
   <div id="top">

@@ -5,9 +5,11 @@ import win32file, win32con, win32event, win32net, pywintypes        # watchdog c
 import json, requests, multiprocessing, threading, queue, configparser
 import fitz # fitz = PyMuPDF
 from pathlib import Path
+from webapp import webapp, socketio
 from inputs.inventoryObject import inventoryObject
 
 inpts = None
+app = webapp()
 lock = threading.Lock()
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 config = configparser.ConfigParser()
@@ -242,6 +244,8 @@ class AirtableUpload(object):
 
 def appendToDebugLog(errormsg,**kwargs):
     errordata = str(str(time.ctime())+' '+str(errormsg) + ''.join('\n        {0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+    for x in errordata.splitlines():
+        socketio.emit("addToLog", x)
     lprint(errordata)
     try:
         a = open(DebugFolder+"Debug log.txt", "a+")
@@ -282,6 +286,20 @@ def retrieveRecordsFromAirtable(airtableURLFields="", offset=None):
             time.sleep(30)
 
 
+
+# Web app section
+def runWebApp():
+    socketio.run(app)
+
+@socketio.on('loadlogs')
+def loadlogs(methods=["GET","POST"]):
+    with open(DebugFolder+"Debug log.txt", 'r') as x:
+        debuglogs = x.readlines()
+    for x in debuglogs:
+        socketio.emit("addToLog", x)
+
+
+
 def main(pool):
     try:
         global inpts
@@ -293,6 +311,7 @@ def main(pool):
         # NOTE: need initialization phase to populate internal database and ensure folder structure and all necessary files exist
         # NOTE: need reconciliation phase to ensure all outputs contain the latest data
 
+        threading.Thread(target=(runWebApp), daemon=True).start()
         db = datastore()
         inpts = inputs(pool, db)
         lprint("Done initializing inputs.")
