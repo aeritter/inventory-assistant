@@ -204,11 +204,11 @@ class AirtableUpload(object):
 
 
 def appendToDebugLog(errormsg,**kwargs):
-    errordata = str(errormsg + "\n"+'\n'.join('{0}: {1!r}'.format(x, y) for x, y in kwargs.items())+'\n')
+    errordata = str(str(time.ctime())+' '+errormsg + ''.join('\n        {0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
     print(errordata)
     try:
         a = open(DebugFolder+"Debug log.txt", "a+")
-        a.write("\n"+str(time.ctime())+' '+errordata)
+        a.write("\n"+errordata)
         a.close()
     except:
         print("Can't append to debug log file.")
