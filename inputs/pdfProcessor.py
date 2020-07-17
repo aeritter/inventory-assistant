@@ -21,7 +21,10 @@ if pdfFolderLocation[:2] == '//' or pdfFolderLocation[:2] == '\\\\':
         'domainname':config['pdfProcessor']['domain_name'],
         'password':config['pdfProcessor']['password']
     }
-    win32net.NetUseAdd(None, 2, netdata)
+    try:
+        win32net.NetUseAdd(None, 2, netdata)
+    except:
+        print("Could not connect to network share.")
 
 DebugFolder = config['pdfProcessor']['debug_folder']
 SettingsFolder = config['pdfProcessor']['settings_folder']
@@ -410,10 +413,10 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
 
 
 # for testing
-if __name__ == "__main__":
-    pool = multiprocessing.Pool()
-    q1 = Queue()
-    q2 = Queue()
-    dog = PDFProcessor(pool,q1,q2)
-    while True:
-        print(q1.get())
+# if __name__ == "__main__":
+#     pool = multiprocessing.Pool()
+#     q1 = Queue()
+#     q2 = Queue()
+#     dog = PDFProcessor(pool,q1,q2)
+#     while True:
+#         print(q1.get())

@@ -1,4 +1,4 @@
-version = '1.1.1'
+version = '1.1.2'
 
 import re, os.path, subprocess, time, importlib, sys, urllib.parse
 import win32file, win32con, win32event, win32net, pywintypes        # watchdog can probably replace all these (pip install watchdog)
@@ -7,6 +7,7 @@ import fitz # fitz = PyMuPDF
 from pathlib import Path
 from inputs.inventoryObject import inventoryObject
 
+inpts = None
 lock = threading.Lock()
 mainFolder = os.path.dirname(os.path.abspath(__file__))+"/"
 config = configparser.ConfigParser()
@@ -44,7 +45,7 @@ class invQueue(object):
         else:
             raise TypeError("Expected an inventory object and a string.")
 
-class errQueue(object):  #method, not object????
+class errQueue(object):
     def __init__(self):
         self.queue = multiprocessing.Manager().Queue()
     def addToQueue(self, errormsg, **extramessages):
@@ -57,8 +58,8 @@ class inputs(object):
     def __init__(self, pool, datastore):
         self.pool = pool
         self.db = datastore
-        self.inventoryQueue = invQueue()         # entries to queue.Queue will yield a reference to what is put in
-        self.errorQueue = errQueue()   # entries to multiprocessing.Queue will yield a copy of what is put in
+        self.inventoryQueue = invQueue()    # entries to queue.Queue will yield a reference to what is put in
+        self.errorQueue = errQueue()        # entries to multiprocessing.Queue will yield a copy of what is put in
 
         # initialize input modules by adding them here
         from inputs.pdfProcessor import PDFProcessor
@@ -93,7 +94,7 @@ class outputs(object):
         self.out = {"airtable":AirtableUpload()}
     def send(self, invobj, source):
         for x in self.out:
-            if x != source:
+            if x.lower() != source.lower():
                 self.out[x].send(invobj)
 
 
@@ -114,25 +115,30 @@ class datastore(object):
         #     else:
         #         appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
 
+    def compareDocsAndUpdate(self, newInvObj, oldInvObj):
+        '''Compare between the new documents and the old documents, using a list of the contents of each page object's dictionary.'''
+        for newDoc in newInvObj.documents:
+            found = False
+            for oldDoc in oldInvObj.documents:
+                for oldPage in oldDoc.pages:
+                    for newPage in newDoc.pages:
+                        if newPage.text == oldPage.text:
+                            found = True
+                            break
+            if found == False:
+                lprint("New doc added to inventory object: "+oldInvObj.uniqueIdentifier)
+                oldInvObj.documents.append(newDoc)
+
     def addInvObjToInventory(self, newInvObj, source):
         self.lastUpdated = time.time()
         if newInvObj.uniqueIdentifier in self.inventory:
-            print("Inventory object exists: "+str(newInvObj.uniqueIdentifier))
+            
+            lprint("Inventory object exists: "+str(newInvObj.uniqueIdentifier))
             oldInvObj = self.inventory[newInvObj.uniqueIdentifier]
 
             # add documents from incoming inventory object to existing inventory object if they do not currently exist there
             if newInvObj.documents != None:
-                for x in newInvObj.documents:
-                    # Compare between the new documents and the old documents, using a list of the contents of each page object's dictionary.
-                    found = False
-                    for y in oldInvObj.documents:
-                        for c in y.__dict__['pages']:
-                            for z in x.__dict__['pages']:
-                                if z.__dict__ == c.__dict__:
-                                    found = True
-                    if found == False:
-                        print("New doc added to inventory object: "+oldInvObj.uniqueIdentifier)
-                        oldInvObj.documents.append(x)
+                self.compareDocsAndUpdate(newInvObj, oldInvObj)
             
             # add incoming specs to existing inventory object
             if newInvObj.specs != None:
@@ -141,6 +147,16 @@ class datastore(object):
                 else:
                     oldInvObj.specs.update(newInvObj.specs)
                 self.output.send(oldInvObj, source)
+            if newInvObj.airtableRefID != None:
+                oldInvObj.airtableRefID = newInvObj.airtableRefID
+
+        elif newInvObj.uniqueIdentifier == "Unknown":
+            for x in self.inventory:
+                for y in newInvObj.alternateIDs:
+                    if y in self.inventory[x].alternateIDs and newInvObj.alternateIDs[y] == self.inventory[x].alternateIDs[y]:
+                        lprint("invObj with alternateIDs ",newInvObj.alternateIDs,"added to invObj ",x)
+                        self.inventory[x].alternateIDs.update(newInvObj.alternateIDs)
+                        self.compareDocsAndUpdate(newInvObj, self.inventory[x])
 
         else:
             self.inventory[newInvObj.uniqueIdentifier] = newInvObj
@@ -168,13 +184,22 @@ class AirtableUpload(object):
             response = requests.patch(airtableURL, data=None, json={"records":[ent.formatForAirtableUpdate() for ent in content]}, headers=AirtableAPIHeaders)
         elif sendType == "Post":
             response = requests.post(airtableURL, data=None, json={"records":[ent.formatForAirtableCreate() for ent in content]}, headers=AirtableAPIHeaders)
-
         if response.status_code != 200:
             if len(content) == 1:
                 appendToDebugLog("Airtable upload failed.", **{"Error":response.text, "Request Type":sendType, "Order Number":content[0].specs["Order Number"]})
             else:
                 for x in content:
                     self.upload(sendType, [x])
+            return
+        responseJSON = response.json()
+        if "records" in responseJSON:
+            for x in responseJSON["records"]:
+                if "Order Number" in x["fields"]:
+                    y = inventoryObject(x["fields"]["Order Number"])
+                    y.airtableRefID = x["id"]
+                    inpts.inventoryQueue.addToQueue(y, "airtable")
+                    
+
 
 
     def loop(self):
@@ -216,24 +241,24 @@ class AirtableUpload(object):
 
 
 def appendToDebugLog(errormsg,**kwargs):
-    errordata = str(str(time.ctime())+' '+errormsg + ''.join('\n        {0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
-    print(errordata)
+    errordata = str(str(time.ctime())+' '+str(errormsg) + ''.join('\n        {0}: {1!r}'.format(x, y) for x, y in kwargs.items()))
+    lprint(errordata)
     try:
         a = open(DebugFolder+"Debug log.txt", "a+")
         a.write("\n"+errordata)
         a.close()
     except:
-        print("Can't append to debug log file.")
+        lprint("Can't append to debug log file.")
     try:
         if enableSlackPosts == True:
             requests.post(slackURL,json={'text':errordata},headers={'Content-type':'application/json'})
     except:
-        print("Could not post to Slack!")
+        lprint("Could not post to Slack!")
 
 
-def lprint(st):     # NOTE: Worth it to use for all print statements?
+def lprint(*st):
     lock.acquire()
-    print(st)
+    print(str(*st))
     lock.release()
 
 
@@ -253,12 +278,13 @@ def retrieveRecordsFromAirtable(airtableURLFields="", offset=None):
             return records
                 
         except ConnectionError:
-            print("Could not connect to airtable.com")
+            lprint("Could not connect to airtable.com")
             time.sleep(30)
 
 
 def main(pool):
     try:
+        global inpts
         # if initialize.Folder_Check() != True:
         #     print("Folder check failed")
         #     raise Exception("Folder check failed")
@@ -268,17 +294,17 @@ def main(pool):
         # NOTE: need reconciliation phase to ensure all outputs contain the latest data
 
         db = datastore()
-        inputs(pool, db)
-        print("Done initializing inputs.")
+        inpts = inputs(pool, db)
+        lprint("Done initializing inputs.")
 
         while True:
             time.sleep(86400)
             if enableSlackPosts == True:
-                print("Checking in!       ")
+                lprint("Checking in!       ")
                 requests.post(slackURL,json={'text':"{}: Checking-in.".format(time.strftime("%a, %b %d"))},headers={'Content-type':'application/json'})
 
     except Exception as exc:
-        print("main() failed: ",str(exc.args))
+        lprint("main() failed: ",str(exc.args))
 
 
 if __name__ == "__main__":
