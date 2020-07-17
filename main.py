@@ -1,4 +1,4 @@
-version = '1.1.0'
+version = '1.1.1'
 
 import re, os.path, subprocess, time, importlib, sys, urllib.parse
 import win32file, win32con, win32event, win32net, pywintypes        # watchdog can probably replace all these (pip install watchdog)
@@ -33,44 +33,59 @@ AirtableAPIHeaders = {
     "Content-Type":"application/json"
 }
 
+class invQueue(object):
+    def __init__(self):
+        self.queue = multiprocessing.Manager().Queue()
+    def addToQueue(self, invObj, source):
+        '''invObj = instance of an inventory object
+        source = string containing name of object origin'''
+        if isinstance(invObj, inventoryObject) and isinstance(source, str):
+            self.queue.put([invObj, source])
+        else:
+            raise TypeError("Expected an inventory object and a string.")
+
+class errQueue(object):  #method, not object????
+    def __init__(self):
+        self.queue = multiprocessing.Manager().Queue()
+    def addToQueue(self, errormsg, **extramessages):
+        if isinstance(errormsg, str):
+            self.queue.put([errormsg, extramessages])
+        else:
+            raise TypeError("Expected a string.")
 
 class inputs(object):
     def __init__(self, pool, datastore):
+        self.pool = pool
         self.db = datastore
-        self.inventoryQueue = queue.Queue()         # entries to queue.Queue will yield a reference to what is put in
-        self.errorQueue = multiprocessing.Queue()   # entries to multiprocessing.Queue will yield a copy of what is put in
+        self.inventoryQueue = invQueue()         # entries to queue.Queue will yield a reference to what is put in
+        self.errorQueue = errQueue()   # entries to multiprocessing.Queue will yield a copy of what is put in
 
         # initialize input modules by adding them here
         from inputs.pdfProcessor import PDFProcessor
-        pdfProcessor = threading.Thread(target=(PDFProcessor), args=(pool, self.addToInventoryQueue, self.addToErrorQueue))
+        pdfProcessor = threading.Thread(target=(PDFProcessor), args=(self.pool, self.inventoryQueue.addToQueue, self.errorQueue.addToQueue))
 
         pdfProcessor.start()
 
         threading.Thread(target=(self.loop_inventoryQueue), daemon=True).start()
         threading.Thread(target=(self.loop_errorQueue), daemon=True).start()
 
-    def addToInventoryQueue(self, invobj, source):
-        '''Add an inventory object to the processing queue so it may be added to the datastore.
-        invobj = filled out inventory object
-        source = originating source of the inventory object '''
-        self.inventoryQueue.put([invobj, source])
-
-    def addToErrorQueue(self, errormsg, dictOfExtraMessages={}):
-        '''Add a message to the error log.
-        errormsg = Base error message
-        dictOfExtraMessages = Dictionary containing extra error messages to add to the log '''
-        if type(dictOfExtraMessages) == dict:
-            self.errorQueue.put([errormsg, dictOfExtraMessages])
-
     def loop_inventoryQueue(self):
         while True:
-            x = self.inventoryQueue.get()
-            self.db.addInvObjToInventory(x[0],x[1])
+            x = self.inventoryQueue.queue.get()
+            if type(x) == list and len(x) == 2:
+                if isinstance(x[0], inventoryObject) and isinstance(x[1], str):
+                    self.db.addInvObjToInventory(x[0],x[1])
+                else:
+                    self.errorQueue.queue.put(["Attempted to add an invalid object to inventory."])
 
     def loop_errorQueue(self):
         while True:
-            x = self.errorQueue.get()
-            appendToDebugLog(x[0], **x[1])
+            x = self.errorQueue.queue.get()
+            if type(x) == list and type(x[0]) == str:
+                if len(x) == 1:
+                    appendToDebugLog(x[0])
+                elif len(x) == 2 and isinstance(x[1], dict):
+                    appendToDebugLog(x[0], **x[1])
 
 
 class outputs(object):
@@ -82,9 +97,6 @@ class outputs(object):
                 self.out[x].send(invobj)
 
 
-        
-        
-
 class datastore(object):
     def __init__(self):
         self.inventory = {}             # dictionary of inventory UIDs and the corresponding inventory object eg. {"12345":inventoryObject()}
@@ -92,15 +104,15 @@ class datastore(object):
         self.lastUpdated = time.time()
         self.output = outputs()
         global airtableURLFields
-        for x in retrieveRecordsFromAirtable(airtableURLFields):
-            if "Order Number" in x['fields']:
-                stockNo = x['fields']['Order Number']       # NOTE: Change from Order Number to Stock Number once applicable.
-                t = inventoryObject(stockNo)
-                t.airtableRefID = x['id']
-                t.specs = x['fields']
-                self.inventory[stockNo] = t
-            else:
-                appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
+        # for x in retrieveRecordsFromAirtable(airtableURLFields):
+        #     if "Order Number" in x['fields']:
+        #         stockNo = x['fields']['Order Number']       # NOTE: Change from Order Number to Stock Number once applicable.
+        #         t = inventoryObject(stockNo)
+        #         t.airtableRefID = x['id']
+        #         t.specs = x['fields']
+        #         self.inventory[stockNo] = t
+        #     else:
+        #         appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
 
     def addInvObjToInventory(self, newInvObj, source):
         self.lastUpdated = time.time()

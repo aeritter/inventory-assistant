@@ -1,5 +1,4 @@
-import subprocess, multiprocessing, threading
-from multiprocessing import Queue
+import subprocess, threading
 import time, os, re, json, urllib, configparser
 import fitz # PyMuPDF
 import win32net
@@ -30,17 +29,16 @@ OriginalDocsFolder = config['pdfProcessor']['original_docs_folder']
 DocumentsFolder = config['pdfProcessor']['documents_folder']
 pdftotextExecutable = SettingsFolder+"/pdftotext.exe"
 
+
 class PDFProcessor(object):
-    def __init__(self, pool, addToQueue, errorQueue):
+    def __init__(self, pool, addToInventory, addToErrorLog):
         '''
         pool = multiprocessing.Pool() in main
         addToQueue = function from input class for passing inventory object and source
         errorQueue = function from input class for errors
         '''
-        self.pdfProcessingData = PDFProcessingSettingsObj(errorQueue)
-        self.addToQueue = addToQueue
-        self.errorQueue = errorQueue
-        self.eventHandler = LogEventHandler(pool, addToQueue, errorQueue, self.pdfProcessingData)
+        self.pdfProcessingData = PDFProcessingSettingsObj(addToErrorLog)
+        self.eventHandler = LogEventHandler(pool, addToInventory, addToErrorLog, self.pdfProcessingData)
         self.observer = Observer()
         self.observer.schedule(self.eventHandler, pdfFolderLocation)
         print('Watching for files.', end='\r')
@@ -48,156 +46,165 @@ class PDFProcessor(object):
             
 
 class LogEventHandler(PatternMatchingEventHandler):
-    def __init__(self, pool, addToQueue, errorQueue, pdfProcessingData):
+    def __init__(self, pool, addToInventory, addToErrorLog, pdfProcessingData):
         self.pool = pool
-        self.addToQueue = addToQueue
-        self.errorQueue = errorQueue
+        self.addToInventory = addToInventory
+        self.addToErrorLog = addToErrorLog
         self.pdfProcessingData = pdfProcessingData
         PatternMatchingEventHandler.__init__(self, patterns=['*.pdf'], ignore_directories=True)
 
     def on_created(self, event):
-        threading.Thread(target=(self.processPDF), args=(event.src_path, self.pool)).start()
+        threading.Thread(target=(processPDF), args=(self.pool, self.addToInventory, self.addToErrorLog, event.src_path, self.pdfProcessingData)).start()
     
-    def processPDF(self, fullFilePath, pool):
-        fileName = fullFilePath.split("/")[-1]
-        fileLocation = fullFilePath[:-len(fileName)]
-        print('File found, processing: '+fileName)
-        docs = list(item for item in pool.imap_unordered(self.startProcessing, [[fileLocation, fileName]]))[0].values()
+
+def processPDF(pool, addToInventory, addToErrorLog, fullFilePath, pdfProcessingData):
+    fileName = fullFilePath.split("/")[-1]
+    fileLocation = fullFilePath[:-len(fileName)]
+    print('File found, processing: '+fileName)
+    docs = pool.apply(PDFSplitter, [addToErrorLog, pdfProcessingData, fileLocation, fileName])
+    
+    if docs == None:
+        return
+
+    pool.starmap_async(processDoc, [[addToInventory, addToErrorLog, doc] for doc in docs.values()]).get()
+    # for y in docs.values():
+        # if "Order Number" in specs:
+        #     z = inventoryObject(specs["Order Number"])
+        #     z.documents.append(y)
+        #     z.specs = specs
+        #     self.addToInventory(z, "pdfProcessor")
+        # elif y.docType == "Supplement":
+            # if "ID" in specs and "Model" in specs:
+            #     UID = str(specs["Model"]+specs["ID"])
+            #     matchFound = False
+            #     for invObj in db.inventory.values():
+            #         if "VIN" in invObj.specs and "Model" in invObj.specs:
+            #             if str(invObj.specs["Model"]+invObj.specs["VIN"][-6:]) == UID:
+            #                 print("UID Matched!")
+            #                 invObj.documents.append(y)
+            #                 matchFound = True
+            #                 break
+            #     if matchFound == False:
+            #         print("UID Match not found for "+UID)
+            #         if UID in db.unknownDocs:
+            #             db.unknownDocs[UID].append(y)
+            #         else:
+            #             db.unknownDocs[UID] = [y]
+
+    # Move original PDF away
+    moveToFolder(fileLocation, fileName, OriginalDocsFolder)
+    print('Watching for files.', end='\r')
+
+
+def processDoc(addToInventory, addToErrorLog, doc):
+    specs = doc.getSpecs()
+    z = inventoryObject(specs["Order Number"] if "Order Number" in specs else "Unknown")
+    z.documents.append(doc)
+    z.specs = specs
+    if "ID" in specs and "Model" in specs:
+        z.alternateIDs = {"UID":str(specs["Model"]+specs["ID"])}
+    addToInventory(z, "pdfProcessor")
+
+
+def PDFSplitter(addToErrorLog, pdfProcessingData, pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
+    pageGroups = {}  # Pages with no uniqueIdentifier will go to the None entry, where they will be added to an ErroredPages.pdf file and appended to the debug log
+    while True:
+        try:
+            with open(pdfLocation+pdfFilename, 'rb') as do:
+                docstream = do.read()
+                break
+        except:
+            print("Attempted to access file too early. Waiting one second.")
+            time.sleep(1)
+    try:
+        doc = fitz.open(stream=docstream, filetype="pdf")
+    except Exception as exc:
+        addToErrorLog.put(["Could not read file as PDF.", {"File":pdfLocation+pdfFilename, "Error":str(exc)}])
+        return
+
+    def getPDFText(filePath, pageToConvert=0):  # pageToConvert set to 0 will convert all pages.
+        try:
+            fileText = subprocess.run([pdftotextExecutable, '-f', str(pageToConvert), '-l', str(pageToConvert), '-simple', '-raw', filePath,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+        except Exception as exc:
+            addToErrorLog("getPDFText() failed.", {"Error":str(exc), "File":pdfLocation+pdfFilename})
+            return None
+        return fileText
+
+    extractedText = getPDFText(pdfLocation+pdfFilename)
+    # Stop if no text could be pulled.
+    if extractedText == None:
+        return
         
-        for y in docs:
-            y.errorQueue = self.errorQueue
-            specs = y.getSpecs()
-            z = inventoryObject(specs["Order Number"] if "Order Number" in specs else "Unknown")
-            z.documents.append(y)
-            z.specs = specs
-            if "ID" in specs and "Model" in specs:
-                z.alternateIDs = {"UID":str(specs["Model"]+specs["ID"])}
-            self.addToQueue(z, "pdfProcessor")
-            # if "Order Number" in specs:
-            #     z = inventoryObject(specs["Order Number"])
-            #     z.documents.append(y)
-            #     z.specs = specs
-            #     self.addToQueue(z, "pdfProcessor")
-            # elif y.docType == "Supplement":
-                # if "ID" in specs and "Model" in specs:
-                #     UID = str(specs["Model"]+specs["ID"])
-                #     matchFound = False
-                #     for invObj in db.inventory.values():
-                #         if "VIN" in invObj.specs and "Model" in invObj.specs:
-                #             if str(invObj.specs["Model"]+invObj.specs["VIN"][-6:]) == UID:
-                #                 print("UID Matched!")
-                #                 invObj.documents.append(y)
-                #                 matchFound = True
-                #                 break
-                #     if matchFound == False:
-                #         print("UID Match not found for "+UID)
-                #         if UID in db.unknownDocs:
-                #             db.unknownDocs[UID].append(y)
-                #         else:
-                #             db.unknownDocs[UID] = [y]
+    # Create a list of page objects for each page found
+    pdfPageList = [page(addToErrorLog, pdfProcessingData, x) for x in extractedText.split('\f')[:-1]]  #last entry will always be empty, as the document will always end with a \f value (formfeed character)
+    print("Done making page objects from pdftotext.exe")
+    ctime = time.time()
 
-        # Move original PDF away
-        moveToFolder(fileLocation, fileName, OriginalDocsFolder)
-        print('Watching for files.', end='\r')
-    
-    def startProcessing(self, x):
-        return self.PDFSplitter(x[0], x[1], x[2], x[3])
+    # Error out if the number of pages found between PyMuPDF and pdftotext.exe do not match.
+    if doc.pageCount != len(pdfPageList):
+        addToErrorLog("Number of page objects does not equal number of pages found after text conversion", {"Document":pdfLocation+pdfFilename})
+        return
 
-    def PDFSplitter(self, errorQueue, pdfProcessingData, pdfLocation, pdfFilename, splitLocation=DocumentsFolder):
-        pageGroups = {}  # Pages with no uniqueIdentifier will go to the None entry, where they will be added to an ErroredPages.pdf file and appended to the debug log
+    # if self.inDebugFolder == True:
+    #     return
+
+    # Create page groups from page invoice numbers
+    docs = {}
+    for pdfPageNum, pdfPage in enumerate(pdfPageList):
+        if pdfPage.invoiceNumber in pageGroups:
+            pageGroups[pdfPage.invoiceNumber].addPage(pdfPage)
+            docs[pdfPage.invoiceNumber].insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
+        else:
+            y = document(addToErrorLog, pdfProcessingData, pdfPage)
+            y.invoiceNumber = pdfPage.invoiceNumber
+            y.docType = pdfPage.getPageType()
+            y.location = str(splitLocation+str(y.docType)+" - "+str(y.invoiceNumber).replace('/','')+".pdf")
+            pageGroups[pdfPage.invoiceNumber] = y
+
+            z = fitz.open()
+            z.insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
+            docs[pdfPage.invoiceNumber] = z
+
+            
+    print("Now writing invoices.")
+    # Write problem pages to the Errored Pages pdf.
+    if None in pageGroups:
+        print("Errored pages!")
+        if os.path.exists(DebugFolder+"Errored Pages.pdf"):
+            ErroredPagesPDF = fitz.open(DebugFolder+"Errored Pages.pdf")
+            ErroredPagesPDF.insertPDF(docs[None])
+            ErroredPagesPDF.saveIncr()
+        else:
+            docs[None].save(DebugFolder+"Errored Pages.pdf")
+
+        # Remove entry for problem pages
+        pageGroups.pop(None)
+        docs.pop(None)
+
+    # Write PDFs from page groups.
+    def writePDFfromSplitter(doc, location):
+        attempt = 0
         while True:
             try:
-                with open(pdfLocation+pdfFilename, 'rb') as do:
-                    docstream = do.read()
-                    break
-            except:
-                print("Attempted to access file too early. Waiting one second.")
-                time.sleep(1)
-        doc = fitz.open(stream=docstream, filetype="pdf")
-
-        def getPDFText(filePath, pageToConvert=0):  # pageToConvert set to 0 will convert all pages.
-            try:
-                fileText = subprocess.run([pdftotextExecutable, '-f', str(pageToConvert), '-l', str(pageToConvert), '-simple', '-raw', filePath,'-'], text=True, stdout=subprocess.PIPE).stdout # convert pdf to text
+                doc.save(location)
+                doc.close()
+                break
             except Exception as exc:
-                errorQueue("getPDFText() failed.", {"Error":str(exc), "File":pdfLocation+pdfFilename})
-                return None
-            return fileText
+                attempt += 1
+                if attempt > 10:
+                    addToErrorLog("Couldn't save after 10 attempts.", {"Location":location, "Error":exc})
+                time.sleep(1)
+                print("Error saving: "+location)
+    writethreads = [threading.Thread(target=(writePDFfromSplitter), args=([docs[z], pageGroups[z].location])) for z in docs]
+    for thread in writethreads:
+        thread.start()
+    for thread in writethreads:
+        thread.join()
 
-        extractedText = getPDFText(pdfLocation+pdfFilename)
-        # Stop if no text could be pulled.
-        if extractedText == None:
-            return
-            
-        # Create a list of page objects for each page found
-        pdfPageList = [page(errorQueue, pdfProcessingData, x) for x in extractedText.split('\f')[:-1]]  #last entry will always be empty, as the document will always end with a \f value (formfeed character)
-        print("Done making page objects from pdftotext.exe")
-        ctime = time.time()
-
-        # Error out if the number of pages found between PyMuPDF and pdftotext.exe do not match.
-        if doc.pageCount != len(pdfPageList):
-            errorQueue("Number of page objects does not equal number of pages found after text conversion", {"Document":pdfLocation+pdfFilename})
-            return
-
-        # if self.inDebugFolder == True:
-        #     return
-
-        # Create page groups from page invoice numbers
-        docs = {}
-        for pdfPageNum, pdfPage in enumerate(pdfPageList):
-            if pdfPage.invoiceNumber in pageGroups:
-                pageGroups[pdfPage.invoiceNumber].addPage(pdfPage)
-                docs[pdfPage.invoiceNumber].insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
-            else:
-                y = document(errorQueue, pdfProcessingData, pdfPage)
-                y.invoiceNumber = pdfPage.invoiceNumber
-                y.docType = pdfPage.getPageType()
-                y.location = str(splitLocation+str(y.docType)+" - "+str(y.invoiceNumber).replace('/','')+".pdf")
-                pageGroups[pdfPage.invoiceNumber] = y
-
-                z = fitz.open()
-                z.insertPDF(doc, from_page=pdfPageNum, to_page=pdfPageNum)
-                docs[pdfPage.invoiceNumber] = z
-
-                
-        print("Now writing invoices.")
-        # Write problem pages to the Errored Pages pdf.
-        if None in pageGroups:
-            print("Errored pages!")
-            if os.path.exists(DebugFolder+"Errored Pages.pdf"):
-                ErroredPagesPDF = fitz.open(DebugFolder+"Errored Pages.pdf")
-                ErroredPagesPDF.insertPDF(docs[None])
-                ErroredPagesPDF.saveIncr()
-            else:
-                docs[None].save(DebugFolder+"Errored Pages.pdf")
-
-            # Remove entry for problem pages
-            pageGroups.pop(None)
-            docs.pop(None)
-
-        # Write PDFs from page groups.
-        def writePDFfromSplitter(doc, location):
-            attempt = 0
-            while True:
-                try:
-                    doc.save(location)
-                    doc.close()
-                    break
-                except Exception as exc:
-                    attempt += 1
-                    if attempt > 10:
-                        errorQueue("Couldn't save after 10 attempts.", {"Location":location, "Error":exc})
-                    time.sleep(1)
-                    print("Error saving: "+location)
-        writethreads = [threading.Thread(target=(writePDFfromSplitter), args=([docs[z], pageGroups[z].location])) for z in docs]
-        for thread in writethreads:
-            thread.start()
-        for thread in writethreads:
-            thread.join()
-
-        # Send document objects back to main() so inventory objects can be created and sent to the database.
-        print("Time taken to split PDF after pdftotext.exe: "+str(time.time()-ctime))
-        doc.close()
-        return pageGroups
+    # Send document objects back to main() so inventory objects can be created and sent to the database.
+    print("Time taken to split PDF after pdftotext.exe: "+str(time.time()-ctime))
+    doc.close()
+    return pageGroups
 
 
 
@@ -270,7 +277,7 @@ class document(object):
                 value = section["Search"]
                 if type(value) == str:
                     if value not in self.pdfProcessingData.data["SearchLists"]:
-                        self.errorQueue.put(["pdfProcessingSettings missing entry in SearchLists.", {"List name":value}])
+                        self.errorQueue("pdfProcessingSettings missing entry in SearchLists.", {"List name":value})
                     else:
                         for x in self.pdfProcessingData.data[value]:
                             specs.update(findSpecsRecursively(x, txt))
@@ -311,12 +318,12 @@ class document(object):
             try:
                 return findSpecsRecursively(procSet, text)
             except Exception as exc:
-                self.errorQueue.put(["Could not find specs, something went wrong.", {"Error":exc}])
+                self.errorQueue("Could not find specs, something went wrong.", {"Error":exc})
 
 
 class PDFProcessingSettingsObj(object):
-    def __init__(self, errorQueue):
-        self.errorQueue = errorQueue
+    def __init__(self, addToErrorLog):
+        self.addToErrorLog = addToErrorLog
         self.fileData = {}          # Unprocessed settings
         self.data = {}              # Settings with RegEx strings converted from a string to re.compile()
         self.maxGuideNumber = 0     # For limiting text splitting when determining file type.
@@ -329,7 +336,7 @@ class PDFProcessingSettingsObj(object):
             with open(SettingsFolder+"pdfProcessingSettings.json", 'r') as clist:
                 self.fileData = json.load(clist)
         except Exception as exc:        
-            self.errorQueue("Could not update from pdfProcessingSettings.json", {"Error":exc})
+            self.addToErrorLog("Could not update from pdfProcessingSettings.json", {"Error":exc})
 
     def update(self):
         self.data = dict(self.fileData)
@@ -399,7 +406,6 @@ def moveToFolder(oldFolder, oldName, newFolder, newName=None):
     except FileNotFoundError:
         print(oldName+" not found.")
         pass
-
 
 
 
