@@ -330,6 +330,7 @@ class PDFProcessingSettingsObj(object):
         self.fileData = {}          # Unprocessed settings
         self.data = {}              # Settings with RegEx strings converted from a string to re.compile()
         self.maxGuideNumber = 0     # For limiting text splitting when determining file type.
+        self.airtableURLFields = ""
         self.loadFromFile()
         self.update()
 
@@ -377,8 +378,7 @@ class PDFProcessingSettingsObj(object):
         # Set the fields used for pulling data from Airtable to the ones we have defined in the processing settings,
         # This is to ensure only editable fields get placed in the specs of an Inventory object
         # otherwise we will encounter errors when outputting to Airtable.
-        global airtableURLFields
-        airtableURLFields = "?"+"&".join("fields%5B%5D={}".format(urllib.parse.quote(x)) for x in fields)
+        self.airtableURLFields = "?"+"&".join("fields%5B%5D={}".format(urllib.parse.quote(x)) for x in fields)
 
 
 

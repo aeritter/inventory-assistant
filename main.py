@@ -1,4 +1,4 @@
-version = '1.1.2'
+version = '1.1.3'
 
 import re, os.path, subprocess, time, importlib, sys, urllib.parse
 import win32file, win32con, win32event, win32net, pywintypes        # watchdog can probably replace all these (pip install watchdog)
@@ -61,11 +61,27 @@ class inputs(object):
         self.inventoryQueue = invQueue()    # entries to queue.Queue will yield a reference to what is put in
         self.errorQueue = errQueue()        # entries to multiprocessing.Queue will yield a copy of what is put in
 
-        # initialize input modules by adding them here
+        # initialize input modules by adding them below
+        from inputs.pdfProcessor import PDFProcessingSettingsObj    # workaround to get settings from one input to another
+        global airtableURLFields
+        airtableURLFields = PDFProcessingSettingsObj(self.errorQueue.addToQueue).airtableURLFields
+        print(airtableURLFields)
+        for x in retrieveRecordsFromAirtable(airtableURLFields):
+            if "Order Number" in x['fields']:
+                stockNo = x['fields']['Order Number']       # NOTE: Change from Order Number to Stock Number once applicable.
+                t = inventoryObject(stockNo)
+                t.airtableRefID = x['id']
+                t.specs = x['fields']
+                self.inventoryQueue.addToQueue(t, "Airtable")
+            else:
+                appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
+
         from inputs.pdfProcessor import PDFProcessor
         pdfProcessor = threading.Thread(target=(PDFProcessor), args=(self.pool, self.inventoryQueue.addToQueue, self.errorQueue.addToQueue))
-
         pdfProcessor.start()
+        
+        
+
 
         threading.Thread(target=(self.loop_inventoryQueue), daemon=True).start()
         threading.Thread(target=(self.loop_errorQueue), daemon=True).start()
@@ -104,16 +120,6 @@ class datastore(object):
         self.unknownDocs = {}           # format = {"docInvID":[docObj1, docObj2]}
         self.lastUpdated = time.time()
         self.output = outputs()
-        global airtableURLFields
-        # for x in retrieveRecordsFromAirtable(airtableURLFields):
-        #     if "Order Number" in x['fields']:
-        #         stockNo = x['fields']['Order Number']       # NOTE: Change from Order Number to Stock Number once applicable.
-        #         t = inventoryObject(stockNo)
-        #         t.airtableRefID = x['id']
-        #         t.specs = x['fields']
-        #         self.inventory[stockNo] = t
-        #     else:
-        #         appendToDebugLog("No Order Number found for Airtable record.", **{"ID":x['id']})
 
     def compareDocsAndUpdate(self, newInvObj, oldInvObj):
         '''Compare between the new documents and the old documents, using a list of the contents of each page object's dictionary.'''
@@ -133,7 +139,7 @@ class datastore(object):
         self.lastUpdated = time.time()
         if newInvObj.uniqueIdentifier in self.inventory:
             
-            lprint("Inventory object exists: "+str(newInvObj.uniqueIdentifier))
+            # lprint("Inventory object exists: "+str(newInvObj.uniqueIdentifier))
             oldInvObj = self.inventory[newInvObj.uniqueIdentifier]
 
             # add documents from incoming inventory object to existing inventory object if they do not currently exist there
@@ -225,7 +231,7 @@ class AirtableUpload(object):
                         # Need to consolidate these two into a single function
                         if len(update) > 0:
                             self.upload("Patch", update)
-                            lprint("Uploaded to Airtable: "+str([ent.uniqueIdentifier for ent in update]))
+                            lprint("Updated in Airtable: "+str([ent.uniqueIdentifier for ent in update]))
                         time.sleep(.2)
                         if len(create) > 0:
                             self.upload("Post", create)
