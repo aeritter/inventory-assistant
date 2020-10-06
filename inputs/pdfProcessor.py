@@ -396,19 +396,30 @@ def getPDFsInFolder(folderLocation):
 def moveToFolder(oldFolder, oldName, newFolder, newName=None):
     if newName == None:
         newName = oldName
-    try:
-        os.rename(oldFolder+oldName, newFolder+newName)
-    except FileExistsError:
-        print("File", newName, "exists in", newFolder, "folder.")
+    attempt = 0
+    while True:
         try:
-            os.rename(oldFolder+oldName, newFolder+"Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
-        except:
-            os.remove(oldFolder+oldName)
-            pass
-        pass
-    except FileNotFoundError:
-        print(oldName+" not found.")
-        pass
+            os.rename(oldFolder+oldName, newFolder+newName)
+        except FileExistsError:
+            print("File", newName, "exists in", newFolder, "folder.")
+            try:
+                os.rename(oldFolder+oldName, newFolder+"Already Exists\\"+newName[:-4]+" (1)"+newName[-4:])  
+            except:
+                os.remove(oldFolder+oldName)
+                break
+            break
+        except FileNotFoundError:
+            print(oldName+" not found.")
+            break
+        except PermissionError:
+            if attempt > 10:
+                break
+            else:
+                attempt += 1
+                print("Permission error - cannot access file: "+oldFolder+oldName)
+                time.sleep(1)
+                pass
+
 
 
 

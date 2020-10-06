@@ -1,11 +1,15 @@
 # Airtable Import
-A program designed to take PDFs and extract data for upload to Airtable. Files are available to build a Docker container.
+A program designed to manage the data flow between services (SQL, Airtable, etc) and pull data from PDFs. Files are available to build a Docker container.
 
-*NOTE*: Needs a re-write for many sections. I only learned about OOP after I had made a lot of progress with this so it's far from ideal and harder to understand/edit than it should be. For now, it does what was intended but I will fix it up when I have the time. Specifically, creating some sort of class to handle inventory objects and another to place them all in (and to run methods for gathering all relevant inventory objects within), and creating separation between those objects and the inputs/outputs.
+### Setup
+After downloading, edit the settings.ini file to match what you need. Specifically, change the `pdf_folder` variable to whichever folder you want it to watch for PDF files. The other variables listed directly below are currently set to use subfolders of `pdf_folder`, but these can be changed to other locations if you would like.
 
+If the folder you want to use for PDFs exists on a network share, you may need to enter credentials to an account that has access to the folder.
+
+The program expects there to be a `pdftotext.exe` executable inside of the Settings folder. You can download this from xpdfreader.com from their download section under "Xpdf command line tools". It is in the zip file.
 
 ### To Run:
-The program can be run directly, so long as you have Python installed and install any dependencies by running this command from the command line: `pip install pywin32, requests, pypdf2`.
+The program can be run directly, so long as you have Python installed and install any dependencies by running this command from the command line: `pip install pywin32, requests, PyMuPDF`.
 Otherwise, it can be run from Docker by running the following commands from within the program's folder:
 ```
 docker image build -t airtable .
@@ -15,51 +19,117 @@ docker run --name airtable --rm airtable
 The first line will build the docker container image from the files in the current working directory according to the instructions in the Dockerfile. It will name the image `airtable`.
 The second line will run the container after it has been built. The running container will be named `airtable` and will be automatically removed if the container stops. If you need to stop the container manually (to make a change and re-build the image), run: `docker container stop airtable`
 
-*NOTE*: The program requires the PDF folder to contain the Settings folder along with the files in it as listed below.
 
+***
 # Folder Structures
 Program Folder:
 ```
 Main folder       - Contains all of the program's files.
-├── airtable-import.py       - The main program.
+├── main.py                  - The main program. Holds input/output queues and the datastore.
 ├── Dockerfile               - File containing instructions for Docker to build the Docker image. (editable as text file)
-├── pdf_folder_location.txt  - Contains the your location to the PDF main folder.
-├── pdftotext.exe            - The program used to convert PDFs to text for further processing. Obtained from xpdfreader.com from the command line tools section on the Download page
 ├── README.md                - This README document.
 ├── requirements.txt         - Contains a list of the Python modules that must be installed for the main program to work. Docker will use this file to run `pip install` within the container image.
-└── settings.ini             - Contains the settings for the program including folder locations, network share credentials, API URLs, etc.
+├── settings.ini             - Contains the settings for the program including folder locations, network share credentials, API URLs, etc.
+└── inputs folder  - For input modules
+    ├── inventoryObject.py   - Contains the inventory object class for storing data (pull this into your inputs, fill it out, then push it to the input queue).
+    └── pdfProcessor.py      - The module that handles PDF processing.
 ```
 
 PDF Folder:
 ```
-PDF main folder   - Contains the following folders, is the place where PDFs will be placed. PDF name does not matter. If a PDF has been sitting here for a while, there may be a problem in conversionlists.py.
+PDF main folder   - Contains the following folders, is the place where PDFs will be placed. PDF name does not matter.
 ├── Debug            - Contains debug files (pdftotext and regexmatches .txt files) and Debug.txt (which tells you information about errors). You can place a PDF in this folder to have it generate debug files for that PDF, in order to see what the program is pulling from that file.
-├── Done             - Contains finished Invoice and Order PDFs. The names for these are automatically determined from their contents.
-├── Errored          - Contains PDFs that could not be properly processed for some reason. Check Debug.txt.
-├── Settings         - Contains adjustable settings.
-|   └── conversionlists.py    - Dictionaries containing the values needed to properly pull information from the PDFs and parse and prepare it for Airtable
-├── Suspended        - Contains PDFs that have been set aside for the time being. Will mostly be supplemental PDFs that are waiting for an Invoice to be appended to. *Appending to Invoice not yet implemented*
-└── Unsplit TRKINV   - Contains PDFs that consist of multiple invoices. These were placed in the main folder, then moved here after the individual orders were split out and processed.
+├── Documents        - Contains finished Invoice and Order PDFs. The names for these are automatically determined from their contents.
+├── Original Docs    - Contains the original .pdf files that were placed in the parent folder after they have been processed.
+└── Settings         - Contains adjustable settings.
+    ├── pdftotext.exe                 - This is the file downloaded from xpdfreader.com. It is necessary for the text extraction -- I haven't found anything better for getting text that can be parsed easily with RegEx.
+    └── pdfProcessingSettings.json    - The JSON-formatted text file containing the values needed to properly pull information from the PDFs and parse and prepare it for Airtable
             
 ```
+***
 # Program Structure
 
-## airtable-import.py
+## main.py
 This is the main script. When a file is placed in the PDF folder, the program runs its processes on it to pull out the relevant information for creating a record in Airtable or updating one. It then moves those .pdf files to either the Done folder or the Errored folder, depending on whether the upload to Airtable was successful.
 
-# conversionlists.py
-NOTE: A Python dictionary looks like the following:
-```
-dictionaryname = {Key:Value, Key2:Value2}
-```
-   dictionaryname is a variable that becomes a dictionary when it is assigned a value of two braces `{}`. It can contain multiple Key:Value pairs, separated by commas. In the case of conversionlists.py, the Value in each Key:Value pair is a list. In this situation, that list should contain either one string or one (or more) pairs of strings and RegEx lines. If the dictionary pair contains just one string as an entry, the entire matching line will be returned for that column. If it contains string/regex pairs, the value that is returned for the column is determined by the RegEx in the second half of the pair.
+## Modules
+All new modules should be added to the Modules folder. Each module should contain a class that should be passed an Input queue and an Error queue, both of which have a property called "addToQueue()". The module may also be passed a multiprocessing pool in case you would like to run multiple processes simultaneously.
 
-This gets pulled into the main script. It was separated out to make it easier to read and edit. It contains a few Python dictionaries, with *headerConversionList* and *dealerCodes* being the ones you will make changes to 99% of the time. The others are for determining how to pull identifier/content pairs from the pdf converted to text. Those will not need to be changed or added to unless Volvo or Mack make changes to their PDF format.
+The Input queue will accept a list with an Inventory object in the first position and a string with the name of the input in the second position. The string is there to let the program know not to send new information from this inventory object out to an output with the same name. Example: `[invObj, "pdfProcessor"]`
 
-### headerConversionList
-The Header conversion list is filled with multiple Key:Value pairs. The first half of each pair is the identifying line that would be seen in the .pdf file. The second half is a list (`[contents, of, list, between, brackets]`) containing the header that it would be matched to in Airtable, with optional accompanying regex entries for further processing. That list can have either just the one header entry, or it can have sets of two -- the first of which is the header and the second is the RegEx string needed to pull out specific information from the matching line in the .pdf.
+The Error queue will accept a list with a string in the first position to describe the error, and a dictionary in the second position for extra information. Example: `["Could not write file", {"File name":filename, "New location":"C:/test/"}]`
 
-#### Airtable
+### inventoryObject.py
+
+This module contains the class that should be instantiated for each object you want to add to the datastore. It can also be instantiated with updates to an object. Whenever one of these is made and sent to the Input queue, it will go to the datastore and update an entry if an entry already exists or it will create a new entry.
+
+### Input - pdfProcessor.py
+
+This module watches a given folder for new PDF files. When one is placed there, it extracts the text and begins processing. It will create a Page object for each page and then use the information contained on each page to determine how the file needs to be split (if it needs it at all). It will then compile all pages that relate to each other and create a Document object. 
+
+Once it has a document object, it will process the document's text with RegEx to pull out all necessary info and then populate an inventory object with this data. After an inventory object has been made, it is sent to the Input queue.
+
+
+
+### pdfProcessingSettings.json
+This file lies in the Settings folder. It contains the information necessary to pull data out of PDF files.
+
+It contains a few different keys:
+* fileTypes
+* ProcessingOrder
+* SearchLists
+* MatchLists
+* ReplaceLists
+* ignoreLists
+
+Each of these serve different purposes.
+
+**fileTypes:** This one has the information on each different type of document that will be processed. Within each filetype are 3 different keys: "Guide", "Defaults", and "Search". 
+
+* **Guide**
+The Guide tells the program what line to search and what to search for in order to determine if the document is a match for this file type. If it is a match, it will process the document according to the instructions left under this file type's "Search" parameter.
+The value for "Guide" will be a list, where the first entry is a number used to tell the program which line to search. All entries after the line should be strings and if any of those strings are found in that line, the program will process the file according to that file type.
+
+* **Defaults**
+This key should contain a dictionary. Any key/value pairs in here are returned automatically as an input to the program. So if a certain document should always have certain attributes when entered into the datastore, you can place them here.
+
+* **Search**
+This tells the program how to parse the PDF after it has been converted to text. Details below.
+
+**ProcessingOrder:** This one contains a list of strings, where a matching string should already exist in the "fileTypes" dictionary. The order of strings in this list will determine the order in which the program tests each document for a fileType match. 
+
+**Lists:** These contain information to be used in the Search key. They exist to reduce repetition and consolidate some processing information.
+
+#### Search
+This parameter under each file type will tell the program how to parse the text and gather data from it. It should contain a list of dictionaries (ex. `"Search":[{},{},{}]`) with each dictionary containing different search parameters. The program processes each "Search" parameter recursively, meaning you can search in a variety of ways. For example:
+
+* It can search for a given string (defined by the Regex parameter) and return the result.
+* It can search for a given string and then search again within that string, then return that result.
+* It can search for a pattern and if any of the results are a match a specific string, it can 
+
+Here are the available keys and what they do:
+
+* Regex
+  * This should contain a string with your Python-formatted regular expression that will be used to find the string you are looking for.
+  * Due to the way this is imported into the program, **double-up on your backslashes**.
+  * Your regular expression should contain a group. The text found in the group is what will be processed/returned.
+* Category
+  * This should contain a string that is returned to the program along with the result of the RegEx search.
+  * This is the "name" of your result. So if I give this a value of `"Color"` and the result of the RegEx search is `Blue` then the program will enter this into the datastore for this document: `"Color":"Blue"`
+* Multiline (optional)
+  * If this exists and has a value of 1 (not a string), the program will treat the RegEx string as a search that finds multiple results (the re.findall() function in Python).
+  * If this exists and has a value of 1, the program expects there to also be a "Match" key in the dictionary as well.
+* Match (optional, requires Multiline)
+  * This will expect your regular expression to contain two (2) groups. The first one will be the text to match and the second one will be the text that is returned or processed further.
+  * This should contain a dictionary with multiple keys. Each key is the text that you would expect to come from group 1 of the RegEx result. If there is a match, the program will search group 2 of the RegEx result according to whatever you have set as the value for the key (so just like your initial Search parameter where it contains a list of dictionaries and each dictionary contains processing data).
+
+For both the `"Regex"` and the `"Match"` key, you can use a string instead of the expected list/dictionary. If you do so, the program will search for that string in either your `"SearchLists"` or `"MatchLists"` respectively. If it finds a child there with the same string, it will use the contents of that key as your search parameters instead. This should be used any time you would otherwise repeat yourself. If changes are needed to your settings, this gives you a single point of contact for those changes and will reduce the size of the settings file.
+
+
+For an example, take a look at `pdfProcessingSettings.json` in the main folder.
+
+
+### Airtable
 Airtable receives data in this format:
 ```
 {
@@ -83,50 +153,6 @@ Airtable receives data in this format:
 "fields" contains a list of column names and the entry that goes in that column for that record.
 
 
-#### Example:
-The script pulls it out into two parts, the "Identifier" which is the part that tells us what the information is, and the "Content" which is the information itself. In the following line, we know that the first 3 characters of that 6 character section (the 100 in 1002Z0) will always refer to the engine, so this is our Identifier. The part starting with MP8 is the matching Content. The section in the middle is not used because it may differ between vehicles even if the Identifier we use does not change.
 
-
-Given this line in a .pdf:
-
-```
-   1002Z0    ENGINE PACKAGE, COMBUSTION       MP8-415C MACK 415HP @ 1400-170
-```
-
-A valid entry in the headerConversionList would look like this:
-```
-'100':['Engine Make',r'^.*? (\w+)','Engine Model',r'^(\S*)'],
-```
-
-The program will use that line in the following manner:
-If the first half of the line from the .pdf (the Identifier, 100) matches the first half of an entry (dictionary Key, 100) in headerConversionList, it will begin processing the Content using the second half of the matched entry in headerConversionList (dictionary Value).
-
-In the above example, this would be the output, with the first entry in every pair being the Airtable column header and the second entry being the cell contents:
-```
-{'Engine Make': 'MACK', 'Engine Model': 'MP8-415C'}
-```
-
-Taking the same line in the .pdf, if you were to use this headerConversionList entry:
-
-```
-'100':['Engine'],
-```
-
-You would end up with this:
-```
-{'Engine':'MP8-415C MACK 415HP @ 1400-170'}
-```
-
-To figure out how to match and refine the Content using RegEx, go to regex101.com and enter the line you want matched. In this case, you would put `MP8-415C MACK 415HP @ 1400-170` in the bottom half (along with many other entries of the same line if you can) and you would try to match it as best you can in the RegEx entry box above. As an example, take that MP8-415C line and use the Engine Make RegEx line with it (the stuff after the r and between the '' (r'in here')) and put them both in regex101.com. Use groups. Group 0 is never used in the script (always contains full match), but it does begin pulling with group 1. If multiple groups are matched, they are appended to each other (ex. r'(\d),(\d)' on the string "3,4" would become "34").
-
-
-### dealerCodes
-This section of conversionlists.py contains the dealer codes and their matching location. *The location must be an exact match to a location already available as an option in Airtable's Location column.*
-
-For example, this would match the dealer code F243 to the Amarillo location.
-
-`"F243":"Amarillo",`
-
-If the .pdf is an invoice, airtable-import.py will recognize it as such and attempt to match the dealer code found in the document with a location in the dealerCodes dictionary, then make the relevant additions to Airtable.
 
 # Debugging
